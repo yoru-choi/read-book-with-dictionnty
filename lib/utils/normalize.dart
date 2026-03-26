@@ -1,21 +1,20 @@
-// 단어 키 정규화, 토큰화, 컨텍스트 추출
+// word key normalization, tokenization, context extraction
 
-/// 단어를 소문자 + 앞뒤 공백 제거한 키로 정규화
+/// Normalize a word to a lowercase trimmed key
 String normalizeKey(String word) => word.trim().toLowerCase();
 
-/// 원문 텍스트에서 단어(한 token)를 token index 기준으로 추출하고
-/// 탭 위치 앞뒤 ±150 문자를 컨텍스트로 반환.
+/// Extract ±150 chars around the tapped position as context.
 String extractContext(String text, int tapCharOffset) {
   final start = (tapCharOffset - 150).clamp(0, text.length);
   final end = (tapCharOffset + 150).clamp(0, text.length);
   return text.substring(start, end);
 }
 
-/// 텍스트를 '단어' 토큰 스팬 리스트로 분해.
-/// 반환: List<_Span> — start/end/text/isWord
+/// Split text into word token spans.
+/// Returns List<_Span> — start/end/text/isWord
 List<TextSpan2> tokenize(String text) {
   final spans = <TextSpan2>[];
-  // 알파벳 + 하이픈(phrasal/hyphenated) 연속, 또는 단독 구두점/공백
+  // letters + hyphens (phrasal/hyphenated), or punctuation/whitespace
   final re = RegExp(r"[A-Za-z][A-Za-z'\-]*|[^\w]|\d+");
   int cursor = 0;
   for (final m in re.allMatches(text)) {
@@ -33,8 +32,8 @@ List<TextSpan2> tokenize(String text) {
   return spans;
 }
 
-/// 웹에서 UI 블로킹 없이 토크나이즈.
-/// 1000 토큰마다 이벤트 루프에 제어권을 반환해 JS 스레드 프리즈 방지.
+/// Tokenize without blocking the UI on web.
+/// Yields control to the event loop every 1000 tokens to prevent JS thread freeze.
 Future<List<TextSpan2>> tokenizeAsync(String text) async {
   final spans = <TextSpan2>[];
   final re = RegExp(r"[A-Za-z][A-Za-z'\-]*|[^\w]|\d+");

@@ -3,7 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 const _kGeminiKey = 'readbook_gemini_api_key';
 const _kGithubPat = 'readbook_github_pat';
 
-/// flutter_secure_storage 기반 민감 정보 저장소 (Android Keystore)
+/// flutter_secure_storage-based sensitive data store (Android Keystore)
 class SecureStorage {
   SecureStorage._();
   static final SecureStorage instance = SecureStorage._();

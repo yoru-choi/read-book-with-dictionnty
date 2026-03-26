@@ -1,0 +1,240 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../types/word_entry.dart';
+import '../utils/normalize.dart';
+import '../utils/storage.dart';
+import '../utils/gemini.dart' as gemini;
+import '../utils/gist.dart' as gist;
+import '../widgets/dict_popup.dart';
+
+/// Launched when the user selects text in any app and taps "ReadBook에 저장"
+/// from the text-selection context menu (ACTION_PROCESS_TEXT).
+///
+/// Shows only a dark overlay + loading spinner while Gemini fetches the word,
+/// then immediately presents [DictPopup] — the same popup used in the reader.
+/// After the user saves/dismisses, the Activity finishes.
+class ProcessTextSaveScreen extends StatefulWidget {
+  const ProcessTextSaveScreen({super.key});
+
+  @override
+  State<ProcessTextSaveScreen> createState() => _ProcessTextSaveScreenState();
+}
+
+class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
+  static const _channel = MethodChannel('com.readbook/process_text');
+
+  bool _loading = true;
+  String? _errorMsg;
+
+  @override
+  void initState() {
+    super.initState();
+    // Run after the first frame so the scaffold context is valid for showDictPopup.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _run());
+  }
+
+  Future<void> _run() async {
+    // 1. Get selected text from native layer.
+    final raw = await _channel.invokeMethod<String>('getSelectedText');
+    final word = raw?.trim() ?? '';
+    if (word.isEmpty) {
+      _close();
+      return;
+    }
+
+    // 2. Load saved words in parallel.
+    final results = await Future.wait<dynamic>([
+      AppStorage.instance.loadWords(),
+      AppStorage.instance.loadHiddenWords(),
+    ]);
+    final words = results[0] as Map<String, WordEntry>;
+    final hiddenWords = results[1] as Map<String, bool>;
+
+    // 3. Look up the entry (cache hit or Gemini call).
+    final key = _resolveKey(words, word);
+    WordEntry? entry = words[key];
+
+    if (entry == null) {
+      entry = await gemini.fetchWordEntry(word, context: '');
+    }
+
+    if (!mounted) return;
+
+    if (entry == null) {
+      setState(() {
+        _loading = false;
+        _errorMsg = '"$word" 의미를 가져올 수 없습니다.\nGemini API 키를 확인해 주세요.';
+      });
+      return;
+    }
+
+    setState(() => _loading = false);
+    final captured = entry;
+
+    // 4. Show the same DictPopup used in the reader.
+    await showDictPopup(
+      context: context,
+      entry: captured,
+      isSaved: words.containsKey(key),
+      isMeaningHidden: hiddenWords[key] ?? false,
+      onSave: () {
+        _saveWord(words, captured);
+        Navigator.pop(context);
+      },
+      onDelete: () {
+        _deleteWord(words, key);
+        Navigator.pop(context);
+      },
+      onFuriganaSelect: (mIdx, kIdx) {
+        _setFurigana(words, key, mIdx, kIdx, captured);
+        Navigator.pop(context);
+      },
+      onToggleMeaningHidden: () {
+        _toggleHidden(hiddenWords, key);
+        Navigator.pop(context);
+      },
+    );
+
+    // 5. Close the Activity (popup was dismissed — saved or not).
+    _close();
+  }
+
+  // ── key resolution (identical to other screens) ───────────────────────────
+
+  String _resolveKey(Map<String, WordEntry> words, String word) {
+    final key = normalizeKey(word);
+    if (words.containsKey(key)) return key;
+    for (final e in words.entries) {
+      if (normalizeKey(e.value.word) == key) return e.key;
+    }
+    final lemmaMatches = words.entries
+        .where((e) =>
+            e.value.lemma.isNotEmpty && normalizeKey(e.value.lemma) == key)
+        .toList();
+    if (lemmaMatches.length == 1) return lemmaMatches.first.key;
+    return key;
+  }
+
+  // ── storage helpers ───────────────────────────────────────────────────────
+
+  Future<void> _saveWord(Map<String, WordEntry> words, WordEntry entry) async {
+    final updated = {...words, normalizeKey(entry.word): entry};
+    await AppStorage.instance.saveWords(updated);
+    gist.syncToGist(updated).catchError((_) {});
+  }
+
+  Future<void> _deleteWord(Map<String, WordEntry> words, String key) async {
+    final updated = Map<String, WordEntry>.from(words)..remove(key);
+    await AppStorage.instance.saveWords(updated);
+    gist.syncToGist(updated).catchError((_) {});
+  }
+
+  Future<void> _setFurigana(Map<String, WordEntry> words, String key,
+      int mIdx, int kIdx, WordEntry existing) async {
+    final updated = {
+      ...words,
+      key: existing.copyWith(furiganaMIdx: mIdx, furiganaKIdx: kIdx),
+    };
+    await AppStorage.instance.saveWords(updated);
+    gist.syncToGist(updated).catchError((_) {});
+  }
+
+  Future<void> _toggleHidden(Map<String, bool> hidden, String key) async {
+    final updated = Map<String, bool>.from(hidden);
+    if (updated.containsKey(key)) {
+      updated.remove(key);
+    } else {
+      updated[key] = true;
+    }
+    await AppStorage.instance.saveHiddenWords(updated);
+  }
+
+  Future<void> _close() async {
+    try {
+      await _channel.invokeMethod<void>('close');
+    } catch (_) {}
+  }
+
+  // ── UI ────────────────────────────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    // Fully transparent scaffold — only the bottom-sheet popup is visible.
+    // The calling app (e.g. Chrome) remains visible behind this activity.
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: _errorMsg != null
+          ? _buildErrorCard(context)
+          : _loading
+              ? _buildLoadingCard(context)
+              : const SizedBox.shrink(), // DictPopup handles its own UI
+    );
+  }
+
+  Widget _buildLoadingCard(BuildContext context) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 24,
+          left: 24,
+          right: 24,
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 12)],
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                  color: Color(0xFF9B59B6), strokeWidth: 2.5),
+            ),
+            SizedBox(width: 12),
+            Text('단어 검색 중...',
+                style: TextStyle(color: Colors.white70, fontSize: 14)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildErrorCard(BuildContext context) {
+    return Align(
+      alignment: Alignment.bottomCenter,
+      child: Container(
+        margin: EdgeInsets.only(
+          bottom: MediaQuery.of(context).padding.bottom + 24,
+          left: 24,
+          right: 24,
+        ),
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: const [BoxShadow(color: Colors.black45, blurRadius: 12)],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.redAccent, size: 32),
+            const SizedBox(height: 12),
+            Text(
+              _errorMsg!,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.white70, fontSize: 13),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(onPressed: _close, child: const Text('닫기')),
+          ],
+        ),
+      ),
+    );
+  }
+}

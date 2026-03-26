@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import '../utils/secure_storage.dart';
+import '../utils/storage.dart';
 import '../utils/gemini.dart' as gemini;
 import '../utils/gist.dart' as gist;
-import '../utils/storage.dart';
-import 'word_list_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -21,6 +20,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _testingGithub = false;
   bool? _geminiOk;
   bool? _githubOk;
+  String _nativeLang = 'ko';
 
   @override
   void initState() {
@@ -31,10 +31,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _loadKeys() async {
     final gKey = await SecureStorage.instance.getGeminiKey();
     final pat = await SecureStorage.instance.getGithubPat();
+    final lang = await AppStorage.instance.loadNativeLang();
     if (mounted) {
       setState(() {
         _geminiCtrl.text = gKey ?? '';
         _githubCtrl.text = pat ?? '';
+        _nativeLang = lang;
       });
     }
   }
@@ -42,10 +44,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _save() async {
     await SecureStorage.instance.setGeminiKey(_geminiCtrl.text.trim());
     await SecureStorage.instance.setGithubPat(_githubCtrl.text.trim());
+    await AppStorage.instance.saveNativeLang(_nativeLang);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('저장됨'),
+          content: Text('Saved'),
           backgroundColor: Color(0xFF9B59B6),
           duration: Duration(seconds: 1),
         ),
@@ -85,48 +88,54 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _importFromGist() async {
-    await SecureStorage.instance.setGithubPat(_githubCtrl.text.trim());
-    try {
-      final remote = await gist.fetchFromGist();
-      final local = await AppStorage.instance.loadWords();
-      final merged = {...remote, ...local}; // 로컬 우선
-      await AppStorage.instance.saveWords(merged);
-      WordListScreen.refreshSignal.value++;
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Gist에서 ${remote.length}개 단어 가져옴'),
-            backgroundColor: const Color(0xFF9B59B6),
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('가져오기 실패: $e'), backgroundColor: Colors.redAccent),
-        );
-      }
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFF1E1E2E),
       appBar: AppBar(
         backgroundColor: const Color(0xFF181825),
-        title: const Text('설정', style: TextStyle(color: Colors.white)),
+        title: const Text('Settings', style: TextStyle(color: Colors.white)),
         actions: [
           TextButton(
             onPressed: _save,
-            child: const Text('저장', style: TextStyle(color: Color(0xFF9B59B6), fontSize: 15)),
+            child: const Text('Save', style: TextStyle(color: Color(0xFF9B59B6), fontSize: 15)),
           ),
         ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          // Native Language
+          _SectionHeader('Native Language'),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: const Color(0xFF313244),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: _nativeLang,
+                isExpanded: true,
+                dropdownColor: const Color(0xFF313244),
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                items: const [
+                  DropdownMenuItem(value: 'ko', child: Text('Korean')),
+                  DropdownMenuItem(value: 'ja', child: Text('Japanese')),
+                  DropdownMenuItem(value: 'zh', child: Text('Chinese')),
+                  DropdownMenuItem(value: 'es', child: Text('Spanish')),
+                  DropdownMenuItem(value: 'fr', child: Text('French')),
+                  DropdownMenuItem(value: 'de', child: Text('German')),
+                  DropdownMenuItem(value: 'vi', child: Text('Vietnamese')),
+                  DropdownMenuItem(value: 'th', child: Text('Thai')),
+                ],
+                onChanged: (v) {
+                  if (v != null) setState(() => _nativeLang = v);
+                },
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
           // GitHub PAT
           _SectionHeader('GitHub Personal Access Token'),
           _ApiKeyField(
@@ -150,20 +159,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             testResult: _geminiOk,
             onTest: _testGemini,
           ),
-          const SizedBox(height: 16),
-          // Gist 가져오기
-          OutlinedButton.icon(
-            onPressed: _importFromGist,
-            icon: const Icon(Icons.cloud_download_outlined),
-            label: const Text('Gist에서 단어 가져오기'),
-            style: OutlinedButton.styleFrom(
-              foregroundColor: const Color(0xFF89DCFF),
-              side: const BorderSide(color: Color(0xFF89DCFF)),
-            ),
-          ),
           const SizedBox(height: 8),
           const Text(
-            '* voca-pin 확장 프로그램과 동일한 Gist를 공유합니다',
+            '* Shares the same Gist as the voca-pin extension\n* Words are auto-imported from Gist on app startup',
             style: TextStyle(color: Colors.white38, fontSize: 11),
           ),
         ],
@@ -246,7 +244,7 @@ class _ApiKeyField extends StatelessWidget {
               ),
               child: testing
                   ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('연결 테스트'),
+                  : const Text('Test connection'),
             ),
             const SizedBox(width: 12),
             if (testResult != null)
@@ -259,7 +257,7 @@ class _ApiKeyField extends StatelessWidget {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    testResult! ? '연결 성공' : '연결 실패',
+                    testResult! ? 'Connected' : 'Failed',
                     style: TextStyle(
                       color: testResult! ? const Color(0xFFA6E3A1) : Colors.redAccent,
                       fontSize: 13,

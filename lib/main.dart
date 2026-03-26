@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'screens/reader_screen.dart';
 import 'screens/word_list_screen.dart';
 import 'screens/settings_screen.dart';
+import 'screens/process_text_save_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -23,6 +24,9 @@ class ReadBookApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
+      routes: {
+        '/process-text': (_) => const ProcessTextSaveScreen(),
+      },
       home: const _Shell(),
     );
   }
@@ -57,17 +61,17 @@ class _ShellState extends State<_Shell> {
           NavigationDestination(
             icon: Icon(Icons.menu_book_outlined),
             selectedIcon: Icon(Icons.menu_book),
-            label: '리더',
+            label: 'Reader',
           ),
           NavigationDestination(
-            icon: Icon(Icons.list_alt_outlined),
-            selectedIcon: Icon(Icons.list_alt),
-            label: '단어장',
+            icon: Icon(Icons.school_outlined),
+            selectedIcon: Icon(Icons.school),
+            label: 'Vocab',
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
-            label: '설정',
+            label: 'Settings',
           ),
         ],
       ),
