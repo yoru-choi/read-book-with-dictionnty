@@ -101,18 +101,26 @@ Future<List<String>> _resolveModels(String apiKey) async {
           })
           .map((m) => (m['name'] as String).replaceFirst('models/', ''))
           .toList();
-      // 버전 파싱: "gemini-2.5-flash-lite" → major=2, minor=5, isLite=true
-      // 최신 버전 우선, 동일 버전 내 lite 먼저(쿼터 높음)
+      // 버전 파싱: "gemini-2.5-flash-lite" → major=2, minor=5, isLite=true, isPro=false
+      // 무료 쿼터 우선: flash-lite > flash > pro, stable > preview, 최신 버전 우선
       int parseMajor(String s) => int.tryParse(RegExp(r'(\d+)').firstMatch(s)?.group(1) ?? '') ?? 0;
       int parseMinor(String s) => int.tryParse(RegExp(r'\d+\.(\d+)').firstMatch(s)?.group(1) ?? '') ?? 0;
       models.sort((a, b) {
+        final al = a.toLowerCase(), bl = b.toLowerCase();
+        // 1) pro는 무료 쿼터 거의 없음 → 최후순위
+        final aPro = al.contains('pro'), bPro = bl.contains('pro');
+        if (aPro != bPro) return aPro ? 1 : -1;
+        // 2) preview/exp 불안정 → 후순위
+        final aPrev = al.contains('preview') || al.contains('exp');
+        final bPrev = bl.contains('preview') || bl.contains('exp');
+        if (aPrev != bPrev) return aPrev ? 1 : -1;
+        // 3) lite 먼저 (무료 쿼터 넉넉)
+        final aLite = al.contains('lite'), bLite = bl.contains('lite');
+        if (aLite != bLite) return aLite ? -1 : 1;
+        // 4) 최신 버전 우선
         final aMaj = parseMajor(a), bMaj = parseMajor(b);
         if (bMaj != aMaj) return bMaj.compareTo(aMaj);
-        final aMin = parseMinor(a), bMin = parseMinor(b);
-        if (bMin != aMin) return bMin.compareTo(aMin);
-        final aLite = a.contains('lite') ? 0 : 1;
-        final bLite = b.contains('lite') ? 0 : 1;
-        return aLite.compareTo(bLite);
+        return parseMinor(b).compareTo(parseMinor(a));
       });
       if (models.isNotEmpty) {
         _cachedModels = models;
