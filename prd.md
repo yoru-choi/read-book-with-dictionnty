@@ -62,7 +62,7 @@ voca-pin Chrome 확장과 동일한 단어 저장·하이라이트 기능을 안
 | TTS | flutter_tts — 전달 문자열에서 한글 사전 제거 (한국어 음성 전환 방지) |
 | 파일 선택 | file_picker |
 | AI 사전 | Gemini API — structured output (JSON schema) · 모델 캐스케이드: `gemini-3.1-flash-lite-preview` → `gemini-3-flash-preview` → `gemini-2.5-flash` · 프롬프트 컨텍스트 최대 300자 |
-| Gist 동기화 | GitHub REST API — 4-샤드 병렬 PATCH (voca-pin 공유) |
+| Gist 동기화 | GitHub REST API — 단일 Gist PATCH (voca-pin 공유) |
 | OCR (신규) | `google_mlkit_text_recognition` — 온디바이스 · 무료 · 오프라인 · 한/영/일 지원 |
 | Assist 브릿지 (신규) | Flutter MethodChannel (`com.readbook/assist`) ↔ 네이티브 `AssistActivity` |
 
@@ -80,7 +80,7 @@ lib/
     storage.dart              # SharedPreferences 래퍼
     secure_storage.dart       # flutter_secure_storage 래퍼 (API 키)
     gemini.dart               # Gemini API + 모델 캐스케이드
-    gist.dart                 # GitHub Gist 4-샤드 동기화
+    gist.dart                 # GitHub Gist 단일 동기화
   screens/
     reader_screen.dart        # 리더 (파일 로드 · 페이지 · 북마크 · 하이라이트 · 팝업)
     word_list_screen.dart     # 단어장 (검색 · 삭제)
@@ -109,10 +109,10 @@ android/app/src/main/
     "lemma": "rest",
     "form": "3rd person singular",
     "phonetic": "/rɛst/",
-    "definitionKo": "쉬다",
+    "definition": "쉬다",
     "meanings": [
-      { "pos": "v.", "ko": ["쉬다", "기대다", "달려 있다"] },
-      { "pos": "n.", "ko": ["휴식", "나머지"] }
+      { "pos": "v.", "trans": ["쉬다", "기대다", "달려 있다"] },
+      { "pos": "n.", "trans": ["휴식", "나머지"] }
     ],
     "savedAt": 1741500000000,
     "furiganaMIdx": 0,

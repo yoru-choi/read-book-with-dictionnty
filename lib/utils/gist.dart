@@ -4,25 +4,17 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../types/word_entry.dart';
 import 'secure_storage.dart';
 
-const _gistDescription = 'vocapin-shard';
-const _kGistIdsKey = 'vocapin_gist_ids';
+const _gistDescription = 'vocapin-data';
+const _kGistIdKey = 'vocapin_gist_id';
 
-int _shardIndex(String word) {
-  final c = word.isNotEmpty ? word[0].toLowerCase() : '';
-  if (c.compareTo('t') >= 0) return 3;
-  if (c.compareTo('n') >= 0) return 2;
-  if (c.compareTo('g') >= 0) return 1;
-  return 0;
-}
-
-Future<List<String>> _resolveGistIds(String pat) async {
+Future<String> _resolveGistId(String pat) async {
   final prefs = await SharedPreferences.getInstance();
-  final cached = prefs.getStringList(_kGistIdsKey);
-  if (cached != null && cached.length == 4) return cached;
-  return _discoverOrCreateGistIds(pat, prefs);
+  final cached = prefs.getString(_kGistIdKey);
+  if (cached != null && cached.isNotEmpty) return cached;
+  return _discoverOrCreateGistId(pat, prefs);
 }
 
-Future<List<String>> _discoverOrCreateGistIds(String pat, SharedPreferences prefs) async {
+Future<String> _discoverOrCreateGistId(String pat, SharedPreferences prefs) async {
   final allGists = <Map<String, dynamic>>[];
   int page = 1;
   while (true) {
@@ -30,131 +22,122 @@ Future<List<String>> _discoverOrCreateGistIds(String pat, SharedPreferences pref
       Uri.parse('https://api.github.com/gists?per_page=100&page=$page'),
       headers: {'Authorization': 'Bearer $pat'},
     );
-    if (res.statusCode != 200) throw Exception('GET /gists failed: \${res.statusCode}');
+    if (res.statusCode != 200) throw Exception('GET /gists failed: ${res.statusCode}');
     final batch = jsonDecode(res.body) as List;
     allGists.addAll(batch.cast<Map<String, dynamic>>());
     if (batch.length < 100) break;
     page++;
   }
 
-  final vocapinGists = allGists
-      .where((g) => g['description'] == _gistDescription)
-      .toList()
-    ..sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
-
-  while (vocapinGists.length < 4) {
-    final res = await http.post(
-      Uri.parse('https://api.github.com/gists'),
-      headers: {'Authorization': 'Bearer $pat', 'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'description': _gistDescription,
-        'public': false,
-        'files': {'dictionary.json': {'content': '{}'}},
-      }),
-    );
-    if (res.statusCode != 201) throw Exception('POST /gists failed: \${res.statusCode}');
-    final created = jsonDecode(res.body) as Map<String, dynamic>;
-    vocapinGists.add(created);
-    vocapinGists.sort((a, b) => (a['id'] as String).compareTo(b['id'] as String));
+  final found = allGists.cast<Map<String, dynamic>>().where((g) => g['description'] == _gistDescription).firstOrNull;
+  if (found != null) {
+    final id = found['id'] as String;
+    await prefs.setString(_kGistIdKey, id);
+    return id;
   }
 
-  final ids = vocapinGists.take(4).map((g) => g['id'] as String).toList();
-  await prefs.setStringList(_kGistIdsKey, ids);
-  return ids;
+  // 없으면 새로 생성
+  final res = await http.post(
+    Uri.parse('https://api.github.com/gists'),
+    headers: {'Authorization': 'Bearer $pat', 'Content-Type': 'application/json'},
+    body: jsonEncode({
+      'description': _gistDescription,
+      'public': false,
+      'files': {'dictionary.json': {'content': '{}'}},
+    }),
+  );
+  if (res.statusCode != 201) throw Exception('POST /gists failed: ${res.statusCode}');
+  final created = jsonDecode(res.body) as Map<String, dynamic>;
+  final id = created['id'] as String;
+  await prefs.setString(_kGistIdKey, id);
+  return id;
 }
 
-/// Sync local Map to Gist via PATCH (4-shard)
+/// Sync local Map to Gist via PATCH (single Gist)
 Future<void> syncToGist(Map<String, WordEntry> words) async {
   final pat = await SecureStorage.instance.getGithubPat();
   if (pat == null || pat.isEmpty) return;
 
-  // split by shard — normalize to shared voca-pin format (no Flutter-specific fields)
-  final shards = [<String, dynamic>{}, <String, dynamic>{}, <String, dynamic>{}, <String, dynamic>{}];
+  final data = <String, dynamic>{};
   for (final e in words.values) {
     final json = e.toJson();
     // meanings 폴백: voca-pin 호환 (meanings가 비어있으면 definition으로 합성)
     if ((json['meanings'] as List?)?.isEmpty ?? true) {
       json['meanings'] = [{'pos': '', 'trans': [e.definition]}];
     }
-    shards[_shardIndex(e.word)][e.word] = json;
+    data[e.word] = json;
   }
 
-  Future<void> patch(List<String> ids) => Future.wait(List.generate(4, (i) async {
+  Future<void> patch(String gistId) async {
     final res = await http.patch(
-      Uri.parse('https://api.github.com/gists/${ids[i]}'),
+      Uri.parse('https://api.github.com/gists/$gistId'),
       headers: {'Authorization': 'Bearer $pat', 'Content-Type': 'application/json'},
       body: jsonEncode({
-        'files': {'dictionary.json': {'content': jsonEncode(shards[i])}},
+        'files': {'dictionary.json': {'content': jsonEncode(data)}},
       }),
     );
     if (res.statusCode == 401) throw Exception('GitHub token is invalid.');
     if (res.statusCode == 404) throw Exception('_404_');
-    if (res.statusCode != 200) throw Exception('GitHub API \${res.statusCode}');
-  }));
+    if (res.statusCode != 200) throw Exception('GitHub API ${res.statusCode}');
+  }
 
-  var gistIds = await _resolveGistIds(pat);
+  var gistId = await _resolveGistId(pat);
   try {
-    await patch(gistIds);
+    await patch(gistId);
   } catch (e) {
     if (e.toString().contains('_404_')) {
-      // cached IDs may be stale — clear and retry once
       final prefs = await SharedPreferences.getInstance();
-      await prefs.remove(_kGistIdsKey);
-      gistIds = await _resolveGistIds(pat);
-      await patch(gistIds);
+      await prefs.remove(_kGistIdKey);
+      gistId = await _resolveGistId(pat);
+      await patch(gistId);
     } else {
       rethrow;
     }
   }
 }
 
-/// Fetch all words from Gist (4-shard, parallel)
+/// Fetch all words from Gist (single Gist)
 Future<Map<String, WordEntry>> fetchFromGist({bool forceRefresh = false}) async {
   final pat = await SecureStorage.instance.getGithubPat();
   if (pat == null || pat.isEmpty) return {};
 
   if (forceRefresh) {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kGistIdsKey);
+    await prefs.remove(_kGistIdKey);
   }
-  final gistIds = await _resolveGistIds(pat);
-  final results = await Future.wait(List.generate(4, (i) async {
-    try {
-      // 1) meta fetch → raw_url 추출
-      final metaRes = await http.get(
-        Uri.parse('https://api.github.com/gists/${gistIds[i]}'),
-        headers: {'Authorization': 'Bearer $pat', 'Accept': 'application/vnd.github+json'},
+  final gistId = await _resolveGistId(pat);
+
+  try {
+    final metaRes = await http.get(
+      Uri.parse('https://api.github.com/gists/$gistId'),
+      headers: {'Authorization': 'Bearer $pat', 'Accept': 'application/vnd.github+json'},
+    );
+    if (metaRes.statusCode != 200) return {};
+    final meta = jsonDecode(metaRes.body) as Map<String, dynamic>;
+    final fileInfo = (meta['files'] as Map?)?['dictionary.json'] as Map?;
+
+    String content;
+    final inlineContent = fileInfo?['content'] as String?;
+    final truncated = fileInfo?['truncated'] as bool? ?? false;
+
+    if (inlineContent != null && !truncated) {
+      content = inlineContent;
+    } else {
+      final rawUrl = fileInfo?['raw_url'] as String?;
+      if (rawUrl == null) return {};
+      final rawRes = await http.get(
+        Uri.parse(rawUrl),
+        headers: {'Authorization': 'Bearer $pat'},
       );
-      if (metaRes.statusCode != 200) return <String, WordEntry>{};
-      final meta = jsonDecode(metaRes.body) as Map<String, dynamic>;
-      final fileInfo = (meta['files'] as Map?)?['dictionary.json'] as Map?;
-
-      // content가 있으면 바로 사용, 없으면(truncated) raw_url로 별도 fetch
-      String content;
-      final inlineContent = fileInfo?['content'] as String?;
-      final truncated = fileInfo?['truncated'] as bool? ?? false;
-
-      if (inlineContent != null && !truncated) {
-        content = inlineContent;
-      } else {
-        final rawUrl = fileInfo?['raw_url'] as String?;
-        if (rawUrl == null) return <String, WordEntry>{};
-        final rawRes = await http.get(
-          Uri.parse(rawUrl),
-          headers: {'Authorization': 'Bearer $pat'},
-        );
-        if (rawRes.statusCode != 200) return <String, WordEntry>{};
-        content = rawRes.body;
-      }
-
-      final map = jsonDecode(content) as Map<String, dynamic>;
-      return map.map((k, v) => MapEntry(k, WordEntry.fromJson(v as Map<String, dynamic>)));
-    } catch (_) {
-      return <String, WordEntry>{};
+      if (rawRes.statusCode != 200) return {};
+      content = rawRes.body;
     }
-  }));
 
-  return results.fold<Map<String, WordEntry>>(<String, WordEntry>{}, (acc, m) => <String, WordEntry>{...acc, ...m});
+    final map = jsonDecode(content) as Map<String, dynamic>;
+    return map.map((k, v) => MapEntry(k, WordEntry.fromJson(v as Map<String, dynamic>)));
+  } catch (_) {
+    return {};
+  }
 }
 
 /// GitHub PAT connection test

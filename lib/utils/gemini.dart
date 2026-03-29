@@ -218,14 +218,6 @@ Future<WordEntry?> fetchWordEntry(String word, {String context = ''}) async {
   return null;
 }
 
-/// Extract surrounding context for a word at a given index in text.
-String extractContext(String text, int index) {
-  const radius = 120;
-  final start = (index - radius).clamp(0, text.length);
-  final end = (index + radius).clamp(0, text.length);
-  return text.substring(start, end);
-}
-
 /// Gemini API connection test (simple ping)
 Future<bool> testGeminiConnection(String apiKey) async {
   try {

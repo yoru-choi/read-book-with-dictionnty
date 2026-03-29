@@ -804,7 +804,6 @@ class _RubySpan extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 단어 크기 측정
     final wordPainter = TextPainter(
       text: TextSpan(text: word, style: wordStyle),
       textDirection: TextDirection.ltr,
@@ -819,24 +818,30 @@ class _RubySpan extends StatelessWidget {
       height: 1.0,
     );
 
-    // SizedBox로 WidgetSpan의 점유 크기를 단어 크기에 고정.
-    // Stack(Clip.none)으로 furigana가 위로 넘쳐 보인다.
+    // 후리가나 폭 측정 → 단어 위 중앙 정렬
+    final rubyPainter = TextPainter(
+      text: TextSpan(text: furigana, style: rubyStyle),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final rubyLeft = (wordW - rubyPainter.width) / 2;
+    rubyPainter.dispose();
+
+    // SizedBox = 단어 점유 크기. Stack(Clip.none) → furigana가 위로 넘침.
+    // bottom: wordH → SizedBox 상단 = 이전 줄과의 행간 공간에 위치
     return SizedBox(
       width: wordW,
       height: wordH,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          // 단어 (하단에 고정) — textScaler 끔 (부모 Text.rich가 이미 적용)
           Positioned(
             left: 0,
             bottom: 0,
             child: Text(word, style: wordStyle, textScaler: TextScaler.noScaling),
           ),
-          // 한글 뜻 (단어 바로 위)
           Positioned(
-            left: 0,
-            bottom: wordH * 0.75,
+            left: rubyLeft,
+            bottom: wordH,
             child: Text(furigana, style: rubyStyle, textScaler: TextScaler.noScaling),
           ),
         ],
