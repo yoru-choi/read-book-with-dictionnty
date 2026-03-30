@@ -33,10 +33,18 @@ class _DictPopupState extends State<DictPopup> {
   static FlutterTts? _sharedTts;
   static bool _sharedTtsReady = false;
   bool _ttsReady = false;
+  late bool _saved;
+  late bool _meaningHidden;
+  int? _selectedMIdx;
+  int? _selectedKIdx;
 
   @override
   void initState() {
     super.initState();
+    _saved = widget.isSaved;
+    _meaningHidden = widget.isMeaningHidden;
+    _selectedMIdx = widget.entry.furiganaMIdx ?? 0;
+    _selectedKIdx = widget.entry.furiganaKIdx ?? 0;
     if (_sharedTtsReady) {
       _ttsReady = true;
     } else {
@@ -47,7 +55,7 @@ class _DictPopupState extends State<DictPopup> {
   Future<void> _initTts() async {
     _sharedTts ??= FlutterTts();
     await _sharedTts!.setLanguage('en-US');
-    await _sharedTts!.setSpeechRate(0.85);
+    await _sharedTts!.setSpeechRate(0.60);
     _sharedTtsReady = true;
     if (mounted) setState(() => _ttsReady = true);
   }
@@ -66,18 +74,21 @@ class _DictPopupState extends State<DictPopup> {
   @override
   Widget build(BuildContext context) {
     final entry = widget.entry;
-    return Container(
-      padding: EdgeInsets.only(
-        left: 20,
-        right: 20,
-        top: 20,
-        bottom: MediaQuery.of(context).viewInsets.bottom + 20,
-      ),
-      decoration: const BoxDecoration(
-        color: Color(0xFF1E1E2E),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: SingleChildScrollView(
+    final screenHeight = MediaQuery.of(context).size.height;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxHeight: screenHeight * 0.85),
+      child: Container(
+        padding: EdgeInsets.only(
+          left: 20,
+          right: 20,
+          top: 20,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 20,
+        ),
+        decoration: const BoxDecoration(
+          color: Color(0xFF1E1E2E),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
@@ -141,24 +152,34 @@ class _DictPopupState extends State<DictPopup> {
                   icon: const Icon(Icons.volume_up_rounded, color: Colors.white70),
                   tooltip: 'Play pronunciation',
                 ),
-                // 개별 한글 주석 표시 토글 (저장된 경우에만)
-                if (widget.isSaved)
+                // 개별 뜻 표시 토글 (저장된 경우에만)
+                if (_saved)
                   IconButton(
-                    onPressed: widget.onToggleMeaningHidden,
+                    onPressed: () {
+                      widget.onToggleMeaningHidden();
+                      setState(() => _meaningHidden = !_meaningHidden);
+                    },
                     icon: Icon(
-                      widget.isMeaningHidden ? Icons.visibility_off : Icons.visibility,
-                      color: widget.isMeaningHidden ? Colors.white38 : const Color(0xFF9B59B6),
+                      _meaningHidden ? Icons.visibility_off : Icons.visibility,
+                      color: _meaningHidden ? Colors.white38 : const Color(0xFF9B59B6),
                     ),
-                    tooltip: widget.isMeaningHidden ? '한글 주석 표시' : '한글 주석 숨기기',
+                    tooltip: _meaningHidden ? 'Show meaning' : 'Hide meaning',
                   ),
-                // save/remove pin button
+                // save/remove button
                 IconButton(
-                  onPressed: widget.isSaved ? widget.onDelete : widget.onSave,
+                  onPressed: () {
+                    if (_saved) {
+                      widget.onDelete();
+                    } else {
+                      widget.onSave();
+                    }
+                    setState(() => _saved = !_saved);
+                  },
                   icon: Icon(
-                    widget.isSaved ? Icons.remove_circle_outline : Icons.add_circle_outline,
-                    color: widget.isSaved ? const Color(0xFF9B59B6) : Colors.white54,
+                    _saved ? Icons.remove_circle_outline : Icons.add_circle_outline,
+                    color: _saved ? const Color(0xFF9B59B6) : Colors.white54,
                   ),
-                  tooltip: widget.isSaved ? 'Remove' : 'Add',
+                  tooltip: _saved ? 'Remove' : 'Save',
                 ),
               ],
             ),
@@ -167,20 +188,29 @@ class _DictPopupState extends State<DictPopup> {
             ...entry.meanings.asMap().entries.map((e) => _MeaningRow(
                   mIdx: e.key,
                   meaning: e.value,
-                  onSelectFurigana: widget.onFuriganaSelect,
+                  selectedMIdx: _selectedMIdx,
+                  selectedKIdx: _selectedKIdx,
+                  onSelectFurigana: (mIdx, kIdx) {
+                    widget.onFuriganaSelect(mIdx, kIdx);
+                    setState(() {
+                      _selectedMIdx = mIdx;
+                      _selectedKIdx = kIdx;
+                    });
+                  },
                 )),
             const SizedBox(height: 12),
-            // 한글 주석 선택 안내 (저장된 경우에만)
-            if (widget.isSaved)
+            // 주석 선택 안내 (저장된 경우에만)
+            if (_saved)
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
-                  '뜻 칩을 탭하면 한글 주석으로 표시됩니다',
+                  'Tap a meaning to pin it above the word',
                   style: const TextStyle(color: Colors.white38, fontSize: 11),
                 ),
               ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -189,9 +219,17 @@ class _DictPopupState extends State<DictPopup> {
 class _MeaningRow extends StatelessWidget {
   final int mIdx;
   final Meaning meaning;
+  final int? selectedMIdx;
+  final int? selectedKIdx;
   final void Function(int mIdx, int kIdx) onSelectFurigana;
 
-  const _MeaningRow({required this.mIdx, required this.meaning, required this.onSelectFurigana});
+  const _MeaningRow({
+    required this.mIdx,
+    required this.meaning,
+    required this.selectedMIdx,
+    required this.selectedKIdx,
+    required this.onSelectFurigana,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -219,12 +257,13 @@ class _MeaningRow extends StatelessWidget {
               children: meaning.trans.asMap().entries.map((e) {
                 final kIdx = e.key;
                 final ko = e.value;
+                final isSelected = mIdx == selectedMIdx && kIdx == selectedKIdx;
                 return GestureDetector(
                   onTap: () => onSelectFurigana(mIdx, kIdx),
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF45475A),
+                      color: isSelected ? const Color(0xFF3B82F6) : const Color(0xFF45475A),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(ko, style: const TextStyle(color: Colors.white, fontSize: 14)),

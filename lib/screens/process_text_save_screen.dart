@@ -7,6 +7,7 @@ import '../utils/storage.dart';
 import '../utils/gemini.dart' as gemini;
 import '../utils/gist.dart' as gist;
 import '../widgets/dict_popup.dart';
+import 'word_list_screen.dart';
 
 /// Launched when the user selects text in any app and taps "ReadBook에 저장"
 /// from the text-selection context menu (ACTION_PROCESS_TEXT).
@@ -64,7 +65,7 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
     if (entry == null) {
       setState(() {
         _loading = false;
-        _errorMsg = '"$word" 의미를 가져올 수 없습니다.\nGemini API 키를 확인해 주세요.';
+        _errorMsg = 'Could not look up "$word".\nPlease check your Gemini API key.';
       });
       return;
     }
@@ -78,22 +79,10 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
       entry: captured,
       isSaved: words.containsKey(key),
       isMeaningHidden: hiddenWords[key] ?? false,
-      onSave: () {
-        _saveWord(words, captured);
-        Navigator.pop(context);
-      },
-      onDelete: () {
-        _deleteWord(words, key);
-        Navigator.pop(context);
-      },
-      onFuriganaSelect: (mIdx, kIdx) {
-        _setFurigana(words, key, mIdx, kIdx, captured);
-        Navigator.pop(context);
-      },
-      onToggleMeaningHidden: () {
-        _toggleHidden(hiddenWords, key);
-        Navigator.pop(context);
-      },
+      onSave: () => _saveWord(words, captured),
+      onDelete: () => _deleteWord(words, key),
+      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(words, key, mIdx, kIdx, captured),
+      onToggleMeaningHidden: () => _toggleHidden(hiddenWords, key),
     );
 
     // 5. Close the Activity (popup was dismissed — saved or not).
@@ -121,13 +110,15 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
   Future<void> _saveWord(Map<String, WordEntry> words, WordEntry entry) async {
     final updated = {...words, normalizeKey(entry.word): entry};
     await AppStorage.instance.saveWords(updated);
-    gist.syncToGist(updated).catchError((_) {});
+    WordListScreen.refreshSignal.value++;
+    gist.syncToGist(updated);
   }
 
   Future<void> _deleteWord(Map<String, WordEntry> words, String key) async {
     final updated = Map<String, WordEntry>.from(words)..remove(key);
     await AppStorage.instance.saveWords(updated);
-    gist.syncToGist(updated).catchError((_) {});
+    WordListScreen.refreshSignal.value++;
+    gist.syncToGist(updated);
   }
 
   Future<void> _setFurigana(Map<String, WordEntry> words, String key,
@@ -137,7 +128,8 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
       key: existing.copyWith(furiganaMIdx: mIdx, furiganaKIdx: kIdx),
     };
     await AppStorage.instance.saveWords(updated);
-    gist.syncToGist(updated).catchError((_) {});
+    WordListScreen.refreshSignal.value++;
+    gist.syncToGist(updated);
   }
 
   Future<void> _toggleHidden(Map<String, bool> hidden, String key) async {
@@ -197,7 +189,7 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
                   color: Color(0xFF9B59B6), strokeWidth: 2.5),
             ),
             SizedBox(width: 12),
-            Text('단어 검색 중...',
+            Text('Looking up word...',
                 style: TextStyle(color: Colors.white70, fontSize: 14)),
           ],
         ),
@@ -231,7 +223,7 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
               style: const TextStyle(color: Colors.white70, fontSize: 13),
             ),
             const SizedBox(height: 16),
-            ElevatedButton(onPressed: _close, child: const Text('닫기')),
+            ElevatedButton(onPressed: _close, child: const Text('Close')),
           ],
         ),
       ),

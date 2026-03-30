@@ -78,7 +78,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
         if (mounted) {
           setState(() {
             _loadingOcr = false;
-            _errorMsg = '스크린샷을 가져올 수 없습니다.\n기기 설정 → 기본 앱 → 디지털 어시스턴트를 ReadBook으로 설정해 주세요.';
+            _errorMsg = 'Unable to capture screenshot.\nGo to Settings → Default apps → Digital assistant and select ReadBook.';
           });
         }
         return;
@@ -133,7 +133,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
       if (mounted) {
         setState(() {
           _loadingOcr = false;
-          _errorMsg = 'OCR 오류: $e';
+          _errorMsg = 'OCR error: $e';
         });
       }
     }
@@ -230,22 +230,10 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
       entry: captured,
       isSaved: _words.containsKey(key),
       isMeaningHidden: _hiddenWords[key] ?? false,
-      onSave: () {
-        _saveWord(captured);
-        Navigator.pop(context);
-      },
-      onDelete: () {
-        _deleteWord(key);
-        Navigator.pop(context);
-      },
-      onFuriganaSelect: (mIdx, kIdx) {
-        _setFurigana(key, mIdx, kIdx, captured);
-        Navigator.pop(context);
-      },
-      onToggleMeaningHidden: () {
-        _toggleHiddenWord(key);
-        Navigator.pop(context);
-      },
+      onSave: () => _saveWord(captured),
+      onDelete: () => _deleteWord(key),
+      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx, captured),
+      onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
 
@@ -255,14 +243,14 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
     final updated = {..._words, normalizeKey(entry.word): entry};
     await AppStorage.instance.saveWords(updated);
     if (mounted) setState(() => _words = updated);
-    gist.syncToGist(updated).catchError((_) {});
+    gist.syncToGist(updated);
   }
 
   Future<void> _deleteWord(String key) async {
     final updated = Map<String, WordEntry>.from(_words)..remove(key);
     await AppStorage.instance.saveWords(updated);
     if (mounted) setState(() => _words = updated);
-    gist.syncToGist(updated).catchError((_) {});
+    gist.syncToGist(updated);
   }
 
   Future<void> _setFurigana(
@@ -273,7 +261,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
     };
     await AppStorage.instance.saveWords(updated);
     if (mounted) setState(() => _words = updated);
-    gist.syncToGist(updated).catchError((_) {});
+    gist.syncToGist(updated);
   }
 
   Future<void> _toggleHiddenWord(String key) async {
@@ -331,7 +319,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
           children: [
             CircularProgressIndicator(color: Color(0xFF9B59B6)),
             SizedBox(height: 12),
-            Text('화면 분석 중...', style: TextStyle(color: Colors.white70)),
+            Text('Analyzing screen...', style: TextStyle(color: Colors.white70)),
           ],
         ),
       );
@@ -352,7 +340,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
                 style: const TextStyle(color: Colors.white70),
               ),
               const SizedBox(height: 24),
-              ElevatedButton(onPressed: _close, child: const Text('닫기')),
+              ElevatedButton(onPressed: _close, child: const Text('Close')),
             ],
           ),
         ),
@@ -423,7 +411,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
                   icon: const Icon(Icons.close, color: Colors.white),
                   style: IconButton.styleFrom(backgroundColor: Colors.black54),
                   onPressed: _close,
-                  tooltip: '닫기',
+                  tooltip: 'Close',
                 ),
               ),
 
@@ -440,7 +428,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: Text(
-                      '${_wordBoxes.length}개 단어 인식',
+                      '${_wordBoxes.length} words detected',
                       style: const TextStyle(
                           color: Colors.white70, fontSize: 12),
                     ),

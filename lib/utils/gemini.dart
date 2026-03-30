@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 import '../types/word_entry.dart';
 import 'secure_storage.dart';
 import 'storage.dart';
+
+const _kModelsKey = 'gemini_cached_models';
 
 const _base = 'https://generativelanguage.googleapis.com/v1beta/models/';
 
@@ -82,6 +85,25 @@ List<String>? _cachedModels;
 
 Future<List<String>> _resolveModels(String apiKey) async {
   if (_cachedModels != null) return _cachedModels!;
+
+  // 1. 로컬 캐시에서 먼저 로드 (콜드 스타트 시 API 호출 절약)
+  final prefs = await SharedPreferences.getInstance();
+  final cached = prefs.getStringList(_kModelsKey);
+  if (cached != null && cached.isNotEmpty) {
+    _cachedModels = cached;
+    // 백그라운드에서 최신 목록 갱신 (다음 세션용)
+    _refreshModelsInBackground(apiKey, prefs);
+    return cached;
+  }
+
+  // 2. 로컬 캐시 없으면 API 호출
+  final models = await _fetchModels(apiKey);
+  _cachedModels = models;
+  await prefs.setStringList(_kModelsKey, models);
+  return models;
+}
+
+Future<List<String>> _fetchModels(String apiKey) async {
   try {
     final res = await http.get(
       Uri.parse('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=$apiKey'),
@@ -101,37 +123,36 @@ Future<List<String>> _resolveModels(String apiKey) async {
           })
           .map((m) => (m['name'] as String).replaceFirst('models/', ''))
           .toList();
-      // 버전 파싱: "gemini-2.5-flash-lite" → major=2, minor=5, isLite=true, isPro=false
-      // 무료 쿼터 우선: flash-lite > flash > pro, stable > preview, 최신 버전 우선
-      int parseMajor(String s) => int.tryParse(RegExp(r'(\d+)').firstMatch(s)?.group(1) ?? '') ?? 0;
-      int parseMinor(String s) => int.tryParse(RegExp(r'\d+\.(\d+)').firstMatch(s)?.group(1) ?? '') ?? 0;
-      models.sort((a, b) {
-        final al = a.toLowerCase(), bl = b.toLowerCase();
-        // 1) pro는 무료 쿼터 거의 없음 → 최후순위
-        final aPro = al.contains('pro'), bPro = bl.contains('pro');
-        if (aPro != bPro) return aPro ? 1 : -1;
-        // 2) preview/exp 불안정 → 후순위
-        final aPrev = al.contains('preview') || al.contains('exp');
-        final bPrev = bl.contains('preview') || bl.contains('exp');
-        if (aPrev != bPrev) return aPrev ? 1 : -1;
-        // 3) lite 먼저 (무료 쿼터 넉넉)
-        final aLite = al.contains('lite'), bLite = bl.contains('lite');
-        if (aLite != bLite) return aLite ? -1 : 1;
-        // 4) 최신 버전 우선
-        final aMaj = parseMajor(a), bMaj = parseMajor(b);
-        if (bMaj != aMaj) return bMaj.compareTo(aMaj);
-        return parseMinor(b).compareTo(parseMinor(a));
-      });
-      if (models.isNotEmpty) {
-        _cachedModels = models;
-        return models;
+      // voca-pin 동일 정렬: lite-preview > lite > flash-preview > flash > pro
+      // tier score: pro=0, flash=1, flash-preview=2, lite=3, lite-preview=4
+      int score(String s) {
+        final l = s.toLowerCase();
+        final tier = l.contains('pro') ? 0 : l.contains('lite') ? 3 : 1;
+        final preview = (l.contains('preview') || l.contains('exp')) ? 1 : 0;
+        return tier + preview;
       }
+      int version(String s) {
+        final m = RegExp(r'(\d+)(?:\.(\d+))?').firstMatch(s);
+        if (m == null) return 0;
+        return (int.tryParse(m.group(1)!) ?? 0) * 100
+             + (int.tryParse(m.group(2) ?? '0') ?? 0);
+      }
+      models.sort((a, b) {
+        final sc = score(b).compareTo(score(a));
+        if (sc != 0) return sc;
+        return version(b).compareTo(version(a));
+      });
+      if (models.isNotEmpty) return models;
     }
   } catch (_) {}
-  // Fallback
-  const fallback = ['gemini-2.5-flash'];
-  _cachedModels = fallback;
-  return fallback;
+  return const ['gemini-2.5-flash'];
+}
+
+void _refreshModelsInBackground(String apiKey, SharedPreferences prefs) {
+  _fetchModels(apiKey).then((models) {
+    _cachedModels = models;
+    prefs.setStringList(_kModelsKey, models);
+  }).catchError((_) {});
 }
 
 String _buildPrompt(String word, String context, String nativeLang) {
@@ -222,6 +243,7 @@ Future<WordEntry?> fetchWordEntry(String word, {String context = ''}) async {
 Future<bool> testGeminiConnection(String apiKey) async {
   try {
     final models = await _resolveModels(apiKey);
+    if (models.isEmpty) return false;
     final url = Uri.parse('$_base${models.first}:generateContent');
     final res = await http.post(
       url,

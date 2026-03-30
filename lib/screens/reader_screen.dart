@@ -53,8 +53,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   Future<void> _reloadWords() async {
-    final words = await AppStorage.instance.loadWords();
-    if (mounted) setState(() => _words = words);
+    final results = await Future.wait([
+      AppStorage.instance.loadWords(),
+      AppStorage.instance.loadHiddenWords(),
+    ]);
+    if (mounted) {
+      setState(() {
+        _words = results[0] as Map<String, WordEntry>;
+        _hiddenWords = results[1] as Map<String, bool>;
+      });
+    }
   }
 
   Future<void> _loadPrefs() async {
@@ -256,22 +264,10 @@ class _ReaderScreenState extends State<ReaderScreen> {
       entry: entry,
       isSaved: _words.containsKey(key),
       isMeaningHidden: _hiddenWords.containsKey(key),
-      onSave: () {
-        _saveWord(entry!);
-        Navigator.pop(context);
-      },
-      onDelete: () {
-        _deleteWord(key);
-        Navigator.pop(context);
-      },
-      onFuriganaSelect: (mIdx, kIdx) {
-        _setFurigana(key, mIdx, kIdx);
-        Navigator.pop(context);
-      },
-      onToggleMeaningHidden: () {
-        _toggleHiddenWord(key);
-        Navigator.pop(context);
-      },
+      onSave: () => _saveWord(entry!),
+      onDelete: () => _deleteWord(key),
+      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx),
+      onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
 
@@ -312,7 +308,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   }
 
   void _syncGist(Map<String, WordEntry> words) {
-    gist.syncToGist(words).catchError((_) {});
+    gist.syncToGist(words);
   }
 
   Widget _appBarIcon(IconData icon, VoidCallback? onPressed, {Color color = Colors.white70}) {
@@ -364,7 +360,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
           _appBarIcon(Icons.bookmark_add_outlined, _text.isEmpty ? null : _addBookmark),
           _appBarIcon(Icons.bookmarks_outlined, _openBookmarks),
           _appBarIcon(
-            _furiganaVisible ? Icons.translate : Icons.translate_outlined,
+            _furiganaVisible ? Icons.visibility : Icons.visibility_off,
             _toggleFurigana,
             color: _furiganaVisible ? const Color(0xFF9B59B6) : Colors.white54,
           ),
@@ -529,8 +525,6 @@ class _ReadViewState extends State<_ReadView> {
       await widget.onPageChanged(0, 1);
       return;
     }
-    if (mounted) setState(() => _pageSpans = null);
-
     final pages = _paginateText(widget.text, _charsPerPage(widget.fontSize));
 
     // lemmaIndex + RegExp를 모든 페이지에 공유되는 1회 사전 계산
@@ -768,10 +762,11 @@ class _ReadViewState extends State<_ReadView> {
           final spans = _pageSpans![i];
           // Text.rich는 RenderParagraph를 사용 → TextPainter 측정과 동일한 좌표 체계
           final textWidget = spans == null || spans.isEmpty
-              ? Text(_pages[i], style: textStyle, strutStyle: strut)
+              ? Text(_pages[i], style: textStyle, strutStyle: strut, textScaler: TextScaler.noScaling)
               : Text.rich(
                   TextSpan(style: textStyle, children: spans),
                   strutStyle: strut,
+                  textScaler: TextScaler.noScaling,
                 );
           return Padding(
             key: _pageKeys[i],

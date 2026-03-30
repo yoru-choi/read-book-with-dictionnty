@@ -64,11 +64,12 @@ class WordEntry {
   });
 
   String? get resolvedFurigana {
-    if (furiganaMIdx == null || furiganaKIdx == null) return null;
-    if (furiganaMIdx! >= meanings.length) return null;
-    final list = meanings[furiganaMIdx!].trans;
-    if (furiganaKIdx! >= list.length) return null;
-    return list[furiganaKIdx!];
+    final mIdx = furiganaMIdx ?? 0;
+    final kIdx = furiganaKIdx ?? 0;
+    if (mIdx >= meanings.length) return null;
+    final list = meanings[mIdx].trans;
+    if (kIdx >= list.length) return null;
+    return list[kIdx];
   }
 
   factory WordEntry.fromJson(Map<String, dynamic> json) {

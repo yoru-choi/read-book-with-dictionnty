@@ -41,21 +41,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _save() async {
-    await SecureStorage.instance.setGeminiKey(_geminiCtrl.text.trim());
-    await SecureStorage.instance.setGithubPat(_githubCtrl.text.trim());
-    await AppStorage.instance.saveNativeLang(_nativeLang);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Saved'),
-          backgroundColor: Color(0xFF9B59B6),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    }
-  }
-
   Future<void> _testGemini() async {
     final key = _geminiCtrl.text.trim();
     if (key.isEmpty) return;
@@ -63,6 +48,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _testingGemini = true;
       _geminiOk = null;
     });
+    await SecureStorage.instance.setGeminiKey(key);
     final ok = await gemini.testGeminiConnection(key);
     if (mounted) {
       setState(() {
@@ -79,6 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _testingGithub = true;
       _githubOk = null;
     });
+    await SecureStorage.instance.setGithubPat(pat);
     final ok = await gist.testGithubConnection(pat);
     if (mounted) {
       setState(() {
@@ -95,12 +82,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF181825),
         title: const Text('Settings', style: TextStyle(color: Colors.white)),
-        actions: [
-          TextButton(
-            onPressed: _save,
-            child: const Text('Save', style: TextStyle(color: Color(0xFF9B59B6), fontSize: 15)),
-          ),
-        ],
+        actions: const [],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -130,7 +112,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   DropdownMenuItem(value: 'th', child: Text('Thai')),
                 ],
                 onChanged: (v) {
-                  if (v != null) setState(() => _nativeLang = v);
+                  if (v != null) {
+                    setState(() => _nativeLang = v);
+                    AppStorage.instance.saveNativeLang(v);
+                  }
                 },
               ),
             ),

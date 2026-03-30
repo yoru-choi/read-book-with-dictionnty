@@ -41,25 +41,13 @@ class AppStorage {
 
   Future<void> saveWords(Map<String, WordEntry> words) async {
     final p = await _p;
-    final encoded = jsonEncode(words.map((k, v) => MapEntry(k, v.toJson())));
+    final encoded = jsonEncode(words.map((k, v) => MapEntry(k, v.toFullJson())));
     await p.setString(_kWordsKey, encoded);
-  }
-
-  Future<void> upsertWord(WordEntry entry) async {
-    final words = await loadWords();
-    words[entry.word.toLowerCase()] = entry;
-    await saveWords(words);
   }
 
   Future<void> deleteWord(String key) async {
     final words = await loadWords();
     words.remove(key);
-    await saveWords(words);
-  }
-
-  Future<void> clearWords() async {
-    final words = await loadWords();
-    words.clear();
     await saveWords(words);
   }
 

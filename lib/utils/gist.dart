@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -6,6 +7,10 @@ import 'secure_storage.dart';
 
 const _gistDescription = 'vocapin-data';
 const _kGistIdKey = 'vocapin_gist_id';
+
+// ── Debounced sync ──────────────────────────────────────────
+Timer? _syncTimer;
+Map<String, WordEntry>? _pendingWords;
 
 Future<String> _resolveGistId(String pat) async {
   final prefs = await SharedPreferences.getInstance();
@@ -53,19 +58,35 @@ Future<String> _discoverOrCreateGistId(String pat, SharedPreferences prefs) asyn
   return id;
 }
 
-/// Sync local Map to Gist via PATCH (single Gist)
-Future<void> syncToGist(Map<String, WordEntry> words) async {
+/// Debounced sync — batches rapid saves into a single PATCH (2s window)
+void syncToGist(Map<String, WordEntry> words) {
+  _pendingWords = words;
+  _syncTimer?.cancel();
+  _syncTimer = Timer(const Duration(seconds: 2), () {
+    final w = _pendingWords;
+    _pendingWords = null;
+    if (w != null) _syncToGistNow(w);
+  });
+}
+
+Future<void> _syncToGistNow(Map<String, WordEntry> words) async {
   final pat = await SecureStorage.instance.getGithubPat();
   if (pat == null || pat.isEmpty) return;
 
   final data = <String, dynamic>{};
-  for (final e in words.values) {
-    final json = e.toJson();
+  for (final entry in words.entries) {
+    final json = entry.value.toFullJson();
+    // voca-pin 호환: word/lemma를 lowercase로 통일
+    final w = entry.value.word.trim().toLowerCase();
+    json['word'] = w;
+    if ((json['lemma'] as String?)?.isNotEmpty ?? false) {
+      json['lemma'] = (json['lemma'] as String).trim().toLowerCase();
+    }
     // meanings 폴백: voca-pin 호환 (meanings가 비어있으면 definition으로 합성)
     if ((json['meanings'] as List?)?.isEmpty ?? true) {
-      json['meanings'] = [{'pos': '', 'trans': [e.definition]}];
+      json['meanings'] = [{'pos': '', 'trans': [entry.value.definition]}];
     }
-    data[e.word] = json;
+    data[w] = json;
   }
 
   Future<void> patch(String gistId) async {
@@ -101,10 +122,6 @@ Future<Map<String, WordEntry>> fetchFromGist({bool forceRefresh = false}) async 
   final pat = await SecureStorage.instance.getGithubPat();
   if (pat == null || pat.isEmpty) return {};
 
-  if (forceRefresh) {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kGistIdKey);
-  }
   final gistId = await _resolveGistId(pat);
 
   try {
@@ -134,7 +151,7 @@ Future<Map<String, WordEntry>> fetchFromGist({bool forceRefresh = false}) async 
     }
 
     final map = jsonDecode(content) as Map<String, dynamic>;
-    return map.map((k, v) => MapEntry(k, WordEntry.fromJson(v as Map<String, dynamic>)));
+    return map.map((k, v) => MapEntry(k.trim().toLowerCase(), WordEntry.fromJson(v as Map<String, dynamic>)));
   } catch (_) {
     return {};
   }

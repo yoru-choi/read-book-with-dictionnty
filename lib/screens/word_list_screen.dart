@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_tts/flutter_tts.dart';
 import '../types/word_entry.dart';
 import '../utils/storage.dart';
+import '../utils/gemini.dart' as gemini;
 import '../utils/gist.dart' as gist;
+import '../utils/normalize.dart';
 import '../widgets/dict_popup.dart';
 
 class WordListScreen extends StatefulWidget {
@@ -18,7 +20,7 @@ class _WordListScreenState extends State<WordListScreen>
     with SingleTickerProviderStateMixin {
   Map<String, WordEntry> _words = {};
   Map<String, bool> _hiddenWords = {};
-  String _query = '';
+  final _searchController = TextEditingController();
   List<WordEntry>? _sortedCache;
   bool _refreshing = false;
 
@@ -28,6 +30,7 @@ class _WordListScreenState extends State<WordListScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _searchController.addListener(() => setState(() {}));
     _load();
     WordListScreen.refreshSignal.addListener(_load);
   }
@@ -36,6 +39,7 @@ class _WordListScreenState extends State<WordListScreen>
   void dispose() {
     WordListScreen.refreshSignal.removeListener(_load);
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -89,7 +93,7 @@ class _WordListScreenState extends State<WordListScreen>
         ..sort((a, b) => b.savedAt.compareTo(a.savedAt)));
 
   List<WordEntry> get _filtered {
-    final q = _query.trim().toLowerCase();
+    final q = _searchController.text.trim().toLowerCase();
     if (q.isEmpty) return _sortedWords;
     return _sortedWords
         .where((e) =>
@@ -105,39 +109,9 @@ class _WordListScreenState extends State<WordListScreen>
       _sortedCache = null;
     });
     WordListScreen.refreshSignal.value++;
-    gist.syncToGist(updated).catchError((_) {});
+    gist.syncToGist(updated);
   }
 
-  Future<void> _deleteAll() async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF313244),
-        title:
-            const Text('Delete All', style: TextStyle(color: Colors.white)),
-        content: const Text('Delete all saved words?',
-            style: TextStyle(color: Colors.white70)),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete',
-                style: TextStyle(color: Colors.redAccent)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-    await AppStorage.instance.clearWords();
-    setState(() {
-      _words = {};
-      _sortedCache = null;
-    });
-    WordListScreen.refreshSignal.value++;
-    gist.syncToGist({}).catchError((_) {});
-  }
 
   Future<void> _setFurigana(String key, int mIdx, int kIdx) async {
     final existing = _words[key];
@@ -152,7 +126,7 @@ class _WordListScreenState extends State<WordListScreen>
       _sortedCache = null;
     });
     WordListScreen.refreshSignal.value++;
-    gist.syncToGist(updated).catchError((_) {});
+    gist.syncToGist(updated);
   }
 
   Future<void> _toggleHiddenWord(String key) async {
@@ -167,26 +141,61 @@ class _WordListScreenState extends State<WordListScreen>
     WordListScreen.refreshSignal.value++;
   }
 
+  Future<void> _lookUpWord(String word) async {
+    if (word.trim().isEmpty) return;
+    final key = normalizeKey(word);
+    WordEntry? entry = _words[key];
+
+    if (entry == null) {
+      entry = await gemini.fetchWordEntry(word, context: '');
+    }
+    if (entry == null || !mounted) return;
+
+    await showDictPopup(
+      context: context,
+      entry: entry,
+      isSaved: _words.containsKey(key),
+      isMeaningHidden: _hiddenWords.containsKey(key),
+      onSave: () => _saveWord(entry!),
+      onDelete: () => _deleteWord(key),
+      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx),
+      onToggleMeaningHidden: () => _toggleHiddenWord(key),
+    );
+  }
+
+  Future<void> _saveWord(WordEntry entry) async {
+    final updated = {..._words, normalizeKey(entry.word): entry};
+    await AppStorage.instance.saveWords(updated);
+    setState(() {
+      _words = updated;
+      _sortedCache = null;
+    });
+    WordListScreen.refreshSignal.value++;
+    gist.syncToGist(updated);
+  }
+
+  Future<void> _deleteWord(String key) async {
+    final updated = Map<String, WordEntry>.from(_words)..remove(key);
+    await AppStorage.instance.saveWords(updated);
+    setState(() {
+      _words = updated;
+      _sortedCache = null;
+    });
+    WordListScreen.refreshSignal.value++;
+    gist.syncToGist(updated);
+  }
+
   Future<void> _showDetail(WordEntry entry) async {
-    final key = entry.word.toLowerCase();
+    final key = normalizeKey(entry.word);
     await showDictPopup(
       context: context,
       entry: entry,
       isSaved: true,
       isMeaningHidden: _hiddenWords.containsKey(key),
-      onSave: () => Navigator.pop(context),
-      onDelete: () {
-        _delete(key);
-        Navigator.pop(context);
-      },
-      onFuriganaSelect: (mIdx, kIdx) {
-        _setFurigana(key, mIdx, kIdx);
-        Navigator.pop(context);
-      },
-      onToggleMeaningHidden: () {
-        _toggleHiddenWord(key);
-        Navigator.pop(context);
-      },
+      onSave: () {},
+      onDelete: () => _delete(key),
+      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx),
+      onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
 
@@ -195,28 +204,22 @@ class _WordListScreenState extends State<WordListScreen>
     final items = _filtered;
     return Scaffold(
       backgroundColor: const Color(0xFF1E1E2E),
-      appBar: AppBar(
-        backgroundColor: const Color(0xFF181825),
-        title:
-            const Text('Vocab', style: TextStyle(color: Colors.white)),
-        actions: [
-          if (_words.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep_rounded,
-                  color: Colors.redAccent),
-              tooltip: 'Delete all',
-              onPressed: _deleteAll,
+      appBar: PreferredSize(
+        preferredSize: const Size.fromHeight(48),
+        child: Container(
+          color: const Color(0xFF181825),
+          child: SafeArea(
+            child: TabBar(
+              controller: _tabController,
+              indicatorColor: const Color(0xFF9B59B6),
+              labelColor: Colors.white,
+              unselectedLabelColor: Colors.white38,
+              tabs: const [
+                Tab(text: 'Flashcard'),
+                Tab(text: 'List'),
+              ],
             ),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          indicatorColor: const Color(0xFF9B59B6),
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white38,
-          tabs: const [
-            Tab(text: 'Flashcard'),
-            Tab(text: 'List'),
-          ],
+          ),
         ),
       ),
       body: TabBarView(
@@ -226,6 +229,7 @@ class _WordListScreenState extends State<WordListScreen>
           _StudyTab(
             words: _words,
             onDelete: _delete,
+            onLookUp: _lookUpWord,
           ),
           // Tab 2: Word List
           _buildListTab(items),
@@ -244,6 +248,7 @@ class _WordListScreenState extends State<WordListScreen>
             children: [
               Expanded(
                 child: TextField(
+                  controller: _searchController,
                   style: const TextStyle(color: Colors.white),
                   cursorColor: const Color(0xFF9B59B6),
                   decoration: InputDecoration(
@@ -257,7 +262,6 @@ class _WordListScreenState extends State<WordListScreen>
                       borderSide: BorderSide.none,
                     ),
                   ),
-                  onChanged: (v) => setState(() => _query = v),
                 ),
               ),
               const SizedBox(width: 8),
@@ -288,7 +292,7 @@ class _WordListScreenState extends State<WordListScreen>
                   itemCount: items.length,
                   itemBuilder: (_, i) {
                     final e = items[i];
-                    final key = e.word.toLowerCase();
+                    final key = normalizeKey(e.word);
                     return _WordTile(
                       entry: e,
                       onTap: () => _showDetail(e),
@@ -307,10 +311,12 @@ class _WordListScreenState extends State<WordListScreen>
 class _StudyTab extends StatefulWidget {
   final Map<String, WordEntry> words;
   final Future<void> Function(String key) onDelete;
+  final Future<void> Function(String word) onLookUp;
 
   const _StudyTab({
     required this.words,
     required this.onDelete,
+    required this.onLookUp,
   });
 
   @override
@@ -326,7 +332,7 @@ class _StudyTabState extends State<_StudyTab> {
   void initState() {
     super.initState();
     _tts.setLanguage('en-US');
-    _tts.setSpeechRate(0.85);
+    _tts.setSpeechRate(0.65);
   }
 
   @override
@@ -374,7 +380,7 @@ class _StudyTabState extends State<_StudyTab> {
 
     final safeIndex = _currentIndex.clamp(0, studyWords.length - 1);
     final entry = studyWords[safeIndex];
-    final key = entry.word.toLowerCase();
+    final key = normalizeKey(entry.word);
 
     return Column(
       children: [
@@ -394,18 +400,16 @@ class _StudyTabState extends State<_StudyTab> {
                 _speak(entry.word);
               }
             },
-            child: Center(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: _FlashCard(entry: entry, revealed: _revealed, onSpeak: _speak),
-              ),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              child: _FlashCard(entry: entry, revealed: _revealed, onSpeak: _speak, onLookUp: widget.onLookUp),
             ),
           ),
         ),
         // Buttons
         if (_revealed)
           Padding(
-            padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 20),
             child: Row(
               children: [
                 Expanded(
@@ -420,7 +424,7 @@ class _StudyTabState extends State<_StudyTab> {
                 Expanded(
                   child: _StudyButton(
                     icon: Icons.delete_outline_rounded,
-                    label: 'Got it',
+                    label: 'I know this',
                     color: const Color(0xFFE74C3C),
                     onTap: () => _handleKnown(key),
                   ),
@@ -439,29 +443,84 @@ class _FlashCard extends StatelessWidget {
   final WordEntry entry;
   final bool revealed;
   final void Function(String word) onSpeak;
+  final Future<void> Function(String word) onLookUp;
 
-  const _FlashCard({required this.entry, required this.revealed, required this.onSpeak});
+  const _FlashCard({required this.entry, required this.revealed, required this.onSpeak, required this.onLookUp});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
-      decoration: BoxDecoration(
-        color: const Color(0xFF2A2A3C),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.3),
-            blurRadius: 20,
-            offset: const Offset(0, 8),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Center(
+          child: Container(
+            width: double.infinity,
+            constraints: BoxConstraints(
+              maxHeight: constraints.maxHeight,
+              minHeight: revealed ? 0 : constraints.maxHeight * 0.55,
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2A2A3C),
+              borderRadius: BorderRadius.circular(20),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.3),
+                  blurRadius: 20,
+                  offset: const Offset(0, 8),
+                ),
+              ],
+            ),
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: constraints.maxWidth - 28,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: _buildContent(context),
+                ),
+              ),
+            ),
           ),
-        ],
+        );
+      },
+    );
+  }
+
+  void _showWordPicker(BuildContext ctx, String sentence) {
+    final words = RegExp(r"[A-Za-z]+(?:'[A-Za-z]+)*")
+        .allMatches(sentence)
+        .map((m) => m.group(0)!)
+        .toSet()
+        .toList();
+    if (words.isEmpty) return;
+    showModalBottomSheet(
+      context: ctx,
+      backgroundColor: const Color(0xFF1E1E2E),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: WrapAlignment.center,
+            children: words.map((w) => ActionChip(
+              label: Text(w, style: const TextStyle(color: Colors.white, fontSize: 16)),
+              backgroundColor: const Color(0xFF313244),
+              onPressed: () {
+                Navigator.pop(ctx);
+                onLookUp(w);
+              },
+            )).toList(),
+          ),
+        ),
       ),
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
+    );
+  }
+
+  List<Widget> _buildContent(BuildContext context) {
+    return [
             // Word + speaker (스피커는 revealed일 때만)
             GestureDetector(
               onTap: revealed ? () => onSpeak(entry.word) : null,
@@ -471,13 +530,11 @@ class _FlashCard extends StatelessWidget {
                 Flexible(
                   child: Text(
                     entry.word,
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
-                      fontSize: 42,
+                      fontSize: revealed ? 42 : 64,
                       fontWeight: FontWeight.bold,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
                 if (revealed) ...[
@@ -521,24 +578,25 @@ class _FlashCard extends StatelessWidget {
                 )),
             // Example sentence
             if (entry.example != null) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               Container(
-                padding: const EdgeInsets.all(12),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 decoration: BoxDecoration(
                   color: Colors.white.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
                   children: [
                     GestureDetector(
                       onTap: () => onSpeak(entry.example!.en),
+                      onLongPress: () => _showWordPicker(context, entry.example!.en),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           Flexible(
                             child: Text(
                               entry.example!.en,
-                              style: const TextStyle(color: Colors.white, fontSize: 14, fontStyle: FontStyle.italic),
+                              style: const TextStyle(color: Colors.white, fontSize: 22),
                               textAlign: TextAlign.center,
                             ),
                           ),
@@ -547,10 +605,10 @@ class _FlashCard extends StatelessWidget {
                         ],
                       ),
                     ),
-                    const SizedBox(height: 6),
+                    const SizedBox(height: 3),
                     Text(
                       entry.example!.trans,
-                      style: const TextStyle(color: Colors.white54, fontSize: 13),
+                      style: const TextStyle(color: Colors.white54, fontSize: 15),
                       textAlign: TextAlign.center,
                     ),
                   ],
@@ -558,10 +616,7 @@ class _FlashCard extends StatelessWidget {
               ),
             ],
           ],
-        ],
-        ),
-      ),
-    );
+        ];
   }
 }
 
