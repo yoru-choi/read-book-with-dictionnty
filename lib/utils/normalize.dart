@@ -1,7 +1,7 @@
 // word key normalization, tokenization, context extraction
 
 /// Normalize a word to a lowercase trimmed key
-String normalizeKey(String word) => word.trim().toLowerCase();
+String normalizeKey(String word) => word.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
 
 /// Extract ±150 chars around the tapped position as context.
 String extractContext(String text, int tapCharOffset) {

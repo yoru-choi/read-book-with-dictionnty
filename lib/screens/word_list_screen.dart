@@ -141,9 +141,22 @@ class _WordListScreenState extends State<WordListScreen>
     WordListScreen.refreshSignal.value++;
   }
 
+  String _resolveKey(String word) {
+    final key = normalizeKey(word);
+    if (_words.containsKey(key)) return key;
+    for (final e in _words.entries) {
+      if (normalizeKey(e.value.word) == key) return e.key;
+    }
+    final lemmaMatches = _words.entries
+        .where((e) => e.value.lemma.isNotEmpty && normalizeKey(e.value.lemma) == key)
+        .toList();
+    if (lemmaMatches.length == 1) return lemmaMatches.first.key;
+    return key;
+  }
+
   Future<void> _lookUpWord(String word) async {
     if (word.trim().isEmpty) return;
-    final key = normalizeKey(word);
+    final key = _resolveKey(word);
     WordEntry? entry = _words[key];
 
     if (entry == null) {
