@@ -113,12 +113,12 @@ class _WordListScreenState extends State<WordListScreen>
   }
 
 
-  Future<void> _setFurigana(String key, int mIdx, int kIdx) async {
+  Future<void> _setGloss(String key, int mIdx, int kIdx) async {
     final existing = _words[key];
     if (existing == null) return;
     final updated = {
       ..._words,
-      key: existing.copyWith(furiganaMIdx: mIdx, furiganaKIdx: kIdx)
+      key: existing.copyWith(glossMIdx: mIdx, glossKIdx: kIdx)
     };
     await AppStorage.instance.saveWords(updated);
     setState(() {
@@ -160,35 +160,34 @@ class _WordListScreenState extends State<WordListScreen>
     WordEntry? entry = _words[key];
 
     if (entry == null) {
-      entry = await gemini.fetchWordEntry(word, context: '');
+      // Don't block UI while fetching — fire and show popup when ready
+      gemini.fetchWordEntry(word, context: '').then((result) {
+        if (result == null || !mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showLookUpPopup(key, result);
+        });
+      });
+      return;
     }
-    if (entry == null || !mounted) return;
 
+    await _showLookUpPopup(key, entry);
+  }
+
+  Future<void> _showLookUpPopup(String key, WordEntry entry) async {
     await showDictPopup(
       context: context,
       entry: entry,
       isSaved: _words.containsKey(key),
       isMeaningHidden: _hiddenWords.containsKey(key),
-      onSave: () => _saveWord(entry!),
-      onDelete: () => _deleteWord(key),
-      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx),
+      onSave: () => _saveWord(entry),
+      onDelete: () => _delete(key),
+      onGlossSelect: (mIdx, kIdx) => _setGloss(key, mIdx, kIdx),
       onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
 
   Future<void> _saveWord(WordEntry entry) async {
     final updated = {..._words, normalizeKey(entry.word): entry};
-    await AppStorage.instance.saveWords(updated);
-    setState(() {
-      _words = updated;
-      _sortedCache = null;
-    });
-    WordListScreen.refreshSignal.value++;
-    gist.syncToGist(updated);
-  }
-
-  Future<void> _deleteWord(String key) async {
-    final updated = Map<String, WordEntry>.from(_words)..remove(key);
     await AppStorage.instance.saveWords(updated);
     setState(() {
       _words = updated;
@@ -207,7 +206,7 @@ class _WordListScreenState extends State<WordListScreen>
       isMeaningHidden: _hiddenWords.containsKey(key),
       onSave: () {},
       onDelete: () => _delete(key),
-      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx),
+      onGlossSelect: (mIdx, kIdx) => _setGloss(key, mIdx, kIdx),
       onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
@@ -340,6 +339,7 @@ class _StudyTabState extends State<_StudyTab> {
   int _currentIndex = 0;
   bool _revealed = false;
   final _tts = FlutterTts();
+  final _flashCardKey = GlobalKey<_FlashCardState>();
 
   @override
   void initState() {
@@ -407,15 +407,17 @@ class _StudyTabState extends State<_StudyTab> {
         // Flashcard
         Expanded(
           child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
             onTap: () {
               if (!_revealed) {
                 setState(() => _revealed = true);
                 _speak(entry.word);
               }
+              _flashCardKey.currentState?._clearSelection();
             },
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: _FlashCard(entry: entry, revealed: _revealed, onSpeak: _speak, onLookUp: widget.onLookUp),
+              child: _FlashCard(key: _flashCardKey, entry: entry, revealed: _revealed, onSpeak: _speak, onLookUp: widget.onLookUp),
             ),
           ),
         ),
@@ -452,13 +454,28 @@ class _StudyTabState extends State<_StudyTab> {
 
 // ── Flashcard Widget ─────────────────────────────────────────
 
-class _FlashCard extends StatelessWidget {
+class _FlashCard extends StatefulWidget {
   final WordEntry entry;
   final bool revealed;
   final void Function(String word) onSpeak;
   final Future<void> Function(String word) onLookUp;
 
-  const _FlashCard({required this.entry, required this.revealed, required this.onSpeak, required this.onLookUp});
+  const _FlashCard({super.key, required this.entry, required this.revealed, required this.onSpeak, required this.onLookUp});
+
+  @override
+  State<_FlashCard> createState() => _FlashCardState();
+}
+
+class _FlashCardState extends State<_FlashCard> {
+  String _lastSelectedText = '';
+
+  void _clearSelection() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
+
+  WordEntry get entry => widget.entry;
+  bool get revealed => widget.revealed;
+  void Function(String) get onSpeak => widget.onSpeak;
 
   @override
   Widget build(BuildContext context) {
@@ -498,37 +515,6 @@ class _FlashCard extends StatelessWidget {
           ),
         );
       },
-    );
-  }
-
-  void _showWordPicker(BuildContext ctx, String sentence) {
-    final words = RegExp(r"[A-Za-z]+(?:'[A-Za-z]+)*")
-        .allMatches(sentence)
-        .map((m) => m.group(0)!)
-        .toSet()
-        .toList();
-    if (words.isEmpty) return;
-    showModalBottomSheet(
-      context: ctx,
-      backgroundColor: const Color(0xFF1E1E2E),
-      builder: (ctx) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: WrapAlignment.center,
-            children: words.map((w) => ActionChip(
-              label: Text(w, style: const TextStyle(color: Colors.white, fontSize: 16)),
-              backgroundColor: const Color(0xFF313244),
-              onPressed: () {
-                Navigator.pop(ctx);
-                onLookUp(w);
-              },
-            )).toList(),
-          ),
-        ),
-      ),
     );
   }
 
@@ -600,22 +586,44 @@ class _FlashCard extends StatelessWidget {
                 ),
                 child: Column(
                   children: [
-                    GestureDetector(
-                      onTap: () => onSpeak(entry.example!.en),
-                      onLongPress: () => _showWordPicker(context, entry.example!.en),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Flexible(
-                            child: Text(
-                              entry.example!.en,
-                              style: const TextStyle(color: Colors.white, fontSize: 22),
-                              textAlign: TextAlign.center,
+                    SelectionArea(
+                      onSelectionChanged: (content) {
+                        _lastSelectedText = content?.plainText ?? '';
+                      },
+                      contextMenuBuilder: (ctx, selectableRegionState) {
+                        final selected = _lastSelectedText.trim();
+                        final extra = selected.isNotEmpty
+                            ? <ContextMenuButtonItem>[
+                                ContextMenuButtonItem(
+                                  onPressed: () {
+                                    ContextMenuController.removeAny();
+                                    widget.onLookUp(selected);
+                                  },
+                                  label: 'Look up',
+                                ),
+                              ]
+                            : <ContextMenuButtonItem>[];
+                        return AdaptiveTextSelectionToolbar.buttonItems(
+                          anchors: selectableRegionState.contextMenuAnchors,
+                          buttonItems: [...extra, ...selectableRegionState.contextMenuButtonItems],
+                        );
+                      },
+                      child: GestureDetector(
+                        onTap: () => onSpeak(entry.example!.en),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Flexible(
+                              child: Text(
+                                entry.example!.en,
+                                style: const TextStyle(color: Colors.white, fontSize: 22),
+                                textAlign: TextAlign.center,
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          const Icon(Icons.volume_up_rounded, color: Colors.white38, size: 16),
-                        ],
+                            const SizedBox(width: 6),
+                            const Icon(Icons.volume_up_rounded, color: Colors.white38, size: 16),
+                          ],
+                        ),
                       ),
                     ),
                     const SizedBox(height: 3),

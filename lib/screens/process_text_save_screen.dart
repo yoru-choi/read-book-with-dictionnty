@@ -12,9 +12,8 @@ import 'word_list_screen.dart';
 /// Launched when the user selects text in any app and taps "ReadBook에 저장"
 /// from the text-selection context menu (ACTION_PROCESS_TEXT).
 ///
-/// Shows only a dark overlay + loading spinner while Gemini fetches the word,
-/// then immediately presents [DictPopup] — the same popup used in the reader.
-/// After the user saves/dismisses, the Activity finishes.
+/// Shows a loading spinner while Gemini fetches the word,
+/// then presents [DictPopup]. After the user saves/dismisses, the Activity finishes.
 class ProcessTextSaveScreen extends StatefulWidget {
   const ProcessTextSaveScreen({super.key});
 
@@ -31,12 +30,10 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
   @override
   void initState() {
     super.initState();
-    // Run after the first frame so the scaffold context is valid for showDictPopup.
     WidgetsBinding.instance.addPostFrameCallback((_) => _run());
   }
 
   Future<void> _run() async {
-    // 1. Get selected text from native layer.
     final raw = await _channel.invokeMethod<String>('getSelectedText');
     final word = raw?.trim() ?? '';
     if (word.isEmpty) {
@@ -44,7 +41,6 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
       return;
     }
 
-    // 2. Load saved words in parallel.
     final results = await Future.wait<dynamic>([
       AppStorage.instance.loadWords(),
       AppStorage.instance.loadHiddenWords(),
@@ -52,13 +48,10 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
     final words = results[0] as Map<String, WordEntry>;
     final hiddenWords = results[1] as Map<String, bool>;
 
-    // 3. Look up the entry (cache hit or Gemini call).
     final key = _resolveKey(words, word);
     WordEntry? entry = words[key];
 
-    if (entry == null) {
-      entry = await gemini.fetchWordEntry(word, context: '');
-    }
+    entry ??= await gemini.fetchWordEntry(word, context: '');
 
     if (!mounted) return;
 
@@ -73,7 +66,9 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
     setState(() => _loading = false);
     final captured = entry;
 
-    // 4. Show the same DictPopup used in the reader.
+    await Future.delayed(Duration.zero);
+    if (!mounted) return;
+
     await showDictPopup(
       context: context,
       entry: captured,
@@ -81,15 +76,12 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
       isMeaningHidden: hiddenWords[key] ?? false,
       onSave: () => _saveWord(words, captured),
       onDelete: () => _deleteWord(words, key),
-      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(words, key, mIdx, kIdx, captured),
+      onGlossSelect: (mIdx, kIdx) => _setGloss(words, key, mIdx, kIdx, captured),
       onToggleMeaningHidden: () => _toggleHidden(hiddenWords, key),
     );
 
-    // 5. Close the Activity (popup was dismissed — saved or not).
     _close();
   }
-
-  // ── key resolution (identical to other screens) ───────────────────────────
 
   String _resolveKey(Map<String, WordEntry> words, String word) {
     final key = normalizeKey(word);
@@ -105,8 +97,6 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
     return key;
   }
 
-  // ── storage helpers ───────────────────────────────────────────────────────
-
   Future<void> _saveWord(Map<String, WordEntry> words, WordEntry entry) async {
     final updated = {...words, normalizeKey(entry.word): entry};
     await AppStorage.instance.saveWords(updated);
@@ -121,11 +111,11 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
     gist.syncToGist(updated);
   }
 
-  Future<void> _setFurigana(Map<String, WordEntry> words, String key,
+  Future<void> _setGloss(Map<String, WordEntry> words, String key,
       int mIdx, int kIdx, WordEntry existing) async {
     final updated = {
       ...words,
-      key: existing.copyWith(furiganaMIdx: mIdx, furiganaKIdx: kIdx),
+      key: existing.copyWith(glossMIdx: mIdx, glossKIdx: kIdx),
     };
     await AppStorage.instance.saveWords(updated);
     WordListScreen.refreshSignal.value++;
@@ -148,19 +138,15 @@ class _ProcessTextSaveScreenState extends State<ProcessTextSaveScreen> {
     } catch (_) {}
   }
 
-  // ── UI ────────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
-    // Fully transparent scaffold — only the bottom-sheet popup is visible.
-    // The calling app (e.g. Chrome) remains visible behind this activity.
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: _errorMsg != null
           ? _buildErrorCard(context)
           : _loading
               ? _buildLoadingCard(context)
-              : const SizedBox.shrink(), // DictPopup handles its own UI
+              : const SizedBox.shrink(),
     );
   }
 

@@ -14,6 +14,9 @@ class ReadBookApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final initialRoute =
+        WidgetsBinding.instance.platformDispatcher.defaultRouteName;
+
     return MaterialApp(
       title: 'ReadBook',
       debugShowCheckedModeBanner: false,
@@ -24,10 +27,12 @@ class ReadBookApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      routes: {
-        '/process-text': (_) => const ProcessTextSaveScreen(),
-      },
-      home: const _Shell(),
+      initialRoute: '/',
+      onGenerateRoute: (_) => MaterialPageRoute(
+        builder: (_) => initialRoute == '/process-text'
+            ? const ProcessTextSaveScreen()
+            : const _Shell(),
+      ),
     );
   }
 }

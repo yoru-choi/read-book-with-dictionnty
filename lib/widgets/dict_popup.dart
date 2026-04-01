@@ -3,14 +3,14 @@ import 'package:flutter_tts/flutter_tts.dart';
 import '../types/word_entry.dart';
 
 /// Word dictionary popup modal
-/// - IPA pronunciation, meanings by POS, TTS, save/furigana selection
+/// - IPA pronunciation, meanings by POS, TTS, save/gloss selection
 class DictPopup extends StatefulWidget {
   final WordEntry entry;
   final bool isSaved;
   final bool isMeaningHidden;
   final VoidCallback onSave;
   final VoidCallback onDelete;
-  final void Function(int mIdx, int kIdx) onFuriganaSelect;
+  final void Function(int mIdx, int kIdx) onGlossSelect;
   final VoidCallback onToggleMeaningHidden;
 
   const DictPopup({
@@ -20,7 +20,7 @@ class DictPopup extends StatefulWidget {
     required this.isMeaningHidden,
     required this.onSave,
     required this.onDelete,
-    required this.onFuriganaSelect,
+    required this.onGlossSelect,
     required this.onToggleMeaningHidden,
   });
 
@@ -43,8 +43,8 @@ class _DictPopupState extends State<DictPopup> {
     super.initState();
     _saved = widget.isSaved;
     _meaningHidden = widget.isMeaningHidden;
-    _selectedMIdx = widget.entry.furiganaMIdx ?? 0;
-    _selectedKIdx = widget.entry.furiganaKIdx ?? 0;
+    _selectedMIdx = widget.entry.glossMIdx ?? 0;
+    _selectedKIdx = widget.entry.glossKIdx ?? 0;
     if (_sharedTtsReady) {
       _ttsReady = true;
     } else {
@@ -76,7 +76,10 @@ class _DictPopupState extends State<DictPopup> {
     final entry = widget.entry;
     final screenHeight = MediaQuery.of(context).size.height;
     return ConstrainedBox(
-      constraints: BoxConstraints(maxHeight: screenHeight * 0.85),
+      constraints: BoxConstraints(
+        minHeight: screenHeight * 0.35,
+        maxHeight: screenHeight * 0.85,
+      ),
       child: Container(
         padding: EdgeInsets.only(
           left: 20,
@@ -93,18 +96,35 @@ class _DictPopupState extends State<DictPopup> {
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            // drag handle
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.white24,
-                  borderRadius: BorderRadius.circular(2),
+            // drag handle + close button
+            Stack(
+              alignment: Alignment.center,
+              children: [
+                Container(
+                  width: 40,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-              ),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: GestureDetector(
+                    onTap: () => Navigator.pop(context),
+                    child: Container(
+                      padding: const EdgeInsets.all(4),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.08),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.keyboard_arrow_down_rounded, color: Colors.white54, size: 20),
+                    ),
+                  ),
+                ),
+              ],
             ),
+            const SizedBox(height: 12),
             // word + IPA + TTS
             Row(
               children: [
@@ -190,13 +210,15 @@ class _DictPopupState extends State<DictPopup> {
                   meaning: e.value,
                   selectedMIdx: _selectedMIdx,
                   selectedKIdx: _selectedKIdx,
-                  onSelectFurigana: (mIdx, kIdx) {
-                    widget.onFuriganaSelect(mIdx, kIdx);
-                    setState(() {
-                      _selectedMIdx = mIdx;
-                      _selectedKIdx = kIdx;
-                    });
-                  },
+                  onSelectGloss: _saved
+                      ? (mIdx, kIdx) {
+                          widget.onGlossSelect(mIdx, kIdx);
+                          setState(() {
+                            _selectedMIdx = mIdx;
+                            _selectedKIdx = kIdx;
+                          });
+                        }
+                      : null,
                 )),
             const SizedBox(height: 12),
             // 주석 선택 안내 (저장된 경우에만)
@@ -221,14 +243,14 @@ class _MeaningRow extends StatelessWidget {
   final Meaning meaning;
   final int? selectedMIdx;
   final int? selectedKIdx;
-  final void Function(int mIdx, int kIdx) onSelectFurigana;
+  final void Function(int mIdx, int kIdx)? onSelectGloss;
 
   const _MeaningRow({
     required this.mIdx,
     required this.meaning,
     required this.selectedMIdx,
     required this.selectedKIdx,
-    required this.onSelectFurigana,
+    this.onSelectGloss,
   });
 
   @override
@@ -257,9 +279,10 @@ class _MeaningRow extends StatelessWidget {
               children: meaning.trans.asMap().entries.map((e) {
                 final kIdx = e.key;
                 final ko = e.value;
-                final isSelected = mIdx == selectedMIdx && kIdx == selectedKIdx;
+                final enabled = onSelectGloss != null;
+                final isSelected = enabled && mIdx == selectedMIdx && kIdx == selectedKIdx;
                 return GestureDetector(
-                  onTap: () => onSelectFurigana(mIdx, kIdx),
+                  onTap: enabled ? () => onSelectGloss!(mIdx, kIdx) : null,
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
@@ -286,12 +309,14 @@ Future<void> showDictPopup({
   bool isMeaningHidden = false,
   required VoidCallback onSave,
   required VoidCallback onDelete,
-  required void Function(int mIdx, int kIdx) onFuriganaSelect,
+  required void Function(int mIdx, int kIdx) onGlossSelect,
   required VoidCallback onToggleMeaningHidden,
 }) {
   return showModalBottomSheet(
     context: context,
     isScrollControlled: true,
+    isDismissible: false,
+    enableDrag: true,
     backgroundColor: Colors.transparent,
     builder: (_) => DictPopup(
       entry: entry,
@@ -299,7 +324,7 @@ Future<void> showDictPopup({
       isMeaningHidden: isMeaningHidden,
       onSave: onSave,
       onDelete: onDelete,
-      onFuriganaSelect: onFuriganaSelect,
+      onGlossSelect: onGlossSelect,
       onToggleMeaningHidden: onToggleMeaningHidden,
     ),
   );

@@ -25,8 +25,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
   Map<String, WordEntry> _words = {};
   Map<String, bool> _hiddenWords = {};
   double _fontSize = 18.0;
-  bool _furiganaVisible = true;
-  bool _loading = false;
+  bool _glossVisible = true;
   int _currentPage = 0;
   int _totalPages = 1;
   int _initialPage = 0;
@@ -71,7 +70,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
       AppStorage.instance.loadWords(),
       AppStorage.instance.loadHiddenWords(),
       AppStorage.instance.loadFontSize(),
-      AppStorage.instance.loadFuriganaVisible(),
+      AppStorage.instance.loadGlossVisible(),
       AppStorage.instance.loadLastText(),
       AppStorage.instance.loadLastFileName(),
       AppStorage.instance.loadReaderPages(),
@@ -80,7 +79,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     final words = results[0] as Map<String, WordEntry>;
     final hidden = results[1] as Map<String, bool>;
     final fontSize = results[2] as double;
-    final furigana = results[3] as bool;
+    final gloss = results[3] as bool;
     final lastText = results[4] as String;
     final lastFileName = results[5] as String;
     final pageMap = results[6] as Map<String, int>;
@@ -91,7 +90,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         _words = words;
         _hiddenWords = hidden;
         _fontSize = fontSize;
-        _furiganaVisible = furigana;
+        _glossVisible = gloss;
         _text = lastText;
         _fileName = lastFileName;
         _initialPage = pageMap[docId] ?? 0;
@@ -191,7 +190,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
         return SafeArea(
           child: ListView.separated(
             itemCount: sorted.length,
-            separatorBuilder: (_, __) => const Divider(height: 1, color: Colors.white12),
+            separatorBuilder: (context, index) => const Divider(height: 1, color: Colors.white12),
             itemBuilder: (_, i) {
               final bm = sorted[i];
               final page = bm['page'] as int;
@@ -250,23 +249,30 @@ class _ReaderScreenState extends State<ReaderScreen> {
     WordEntry? entry = _words[key];
 
     if (entry == null) {
-      setState(() => _loading = true);
+      // Don't block UI while fetching — show popup when ready
       final idx = _text.indexOf(word);
       final ctx = idx >= 0 ? extractContext(_text, idx) : '';
-      entry = await gemini.fetchWordEntry(word, context: ctx);
-      setState(() => _loading = false);
+      gemini.fetchWordEntry(word, context: ctx).then((result) {
+        if (result == null || !mounted) return;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showLookUpPopup(key, result);
+        });
+      });
+      return;
     }
 
-    if (entry == null || !mounted) return;
+    await _showLookUpPopup(key, entry);
+  }
 
+  Future<void> _showLookUpPopup(String key, WordEntry entry) async {
     await showDictPopup(
       context: context,
       entry: entry,
       isSaved: _words.containsKey(key),
       isMeaningHidden: _hiddenWords.containsKey(key),
-      onSave: () => _saveWord(entry!),
+      onSave: () => _saveWord(entry),
       onDelete: () => _deleteWord(key),
-      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx),
+      onGlossSelect: (mIdx, kIdx) => _setGloss(key, mIdx, kIdx),
       onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
@@ -276,7 +282,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     await AppStorage.instance.saveWords(updated);
     setState(() => _words = updated);
     WordListScreen.refreshSignal.value++;
-    _syncGist(updated);
+    gist.syncToGist(updated);
   }
 
   Future<void> _deleteWord(String key) async {
@@ -284,16 +290,16 @@ class _ReaderScreenState extends State<ReaderScreen> {
     await AppStorage.instance.saveWords(updated);
     setState(() => _words = updated);
     WordListScreen.refreshSignal.value++;
-    _syncGist(updated);
+    gist.syncToGist(updated);
   }
 
-  Future<void> _setFurigana(String key, int mIdx, int kIdx) async {
+  Future<void> _setGloss(String key, int mIdx, int kIdx) async {
     final existing = _words[key];
     if (existing == null) return;
-    final updated = {..._words, key: existing.copyWith(furiganaMIdx: mIdx, furiganaKIdx: kIdx)};
+    final updated = {..._words, key: existing.copyWith(glossMIdx: mIdx, glossKIdx: kIdx)};
     await AppStorage.instance.saveWords(updated);
     setState(() => _words = updated);
-    _syncGist(updated);
+    gist.syncToGist(updated);
   }
 
   Future<void> _toggleHiddenWord(String key) async {
@@ -307,9 +313,7 @@ class _ReaderScreenState extends State<ReaderScreen> {
     setState(() => _hiddenWords = updated);
   }
 
-  void _syncGist(Map<String, WordEntry> words) {
-    gist.syncToGist(words);
-  }
+
 
   Widget _appBarIcon(IconData icon, VoidCallback? onPressed, {Color color = Colors.white70}) {
     return SizedBox(
@@ -331,9 +335,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
     AppStorage.instance.saveFontSize(newSize);
   }
 
-  void _toggleFurigana() {
-    setState(() => _furiganaVisible = !_furiganaVisible);
-    AppStorage.instance.saveFuriganaVisible(_furiganaVisible);
+  void _toggleGloss() {
+    setState(() => _glossVisible = !_glossVisible);
+    AppStorage.instance.saveGlossVisible(_glossVisible);
   }
 
   @override
@@ -360,9 +364,9 @@ class _ReaderScreenState extends State<ReaderScreen> {
           _appBarIcon(Icons.bookmark_add_outlined, _text.isEmpty ? null : _addBookmark),
           _appBarIcon(Icons.bookmarks_outlined, _openBookmarks),
           _appBarIcon(
-            _furiganaVisible ? Icons.visibility : Icons.visibility_off,
-            _toggleFurigana,
-            color: _furiganaVisible ? const Color(0xFF9B59B6) : Colors.white54,
+            _glossVisible ? Icons.visibility : Icons.visibility_off,
+            _toggleGloss,
+            color: _glossVisible ? const Color(0xFF9B59B6) : Colors.white54,
           ),
           _appBarIcon(Icons.text_decrease, () => _adjustFont(-1)),
           _appBarIcon(Icons.text_increase, () => _adjustFont(1)),
@@ -378,15 +382,11 @@ class _ReaderScreenState extends State<ReaderScreen> {
             words: _words,
             hiddenWords: _hiddenWords,
             fontSize: _fontSize,
-            furiganaVisible: _furiganaVisible,
+            glossVisible: _glossVisible,
             onWordSelect: _onWordSelect,
             initialPage: _initialPage,
             onPageChanged: _onPageChanged,
           ),
-          if (_loading)
-            const Center(
-              child: CircularProgressIndicator(color: Color(0xFF9B59B6)),
-            ),
         ],
       ),
     );
@@ -399,7 +399,7 @@ class _ReadView extends StatefulWidget {
   final Map<String, WordEntry> words;
   final Map<String, bool> hiddenWords;
   final double fontSize;
-  final bool furiganaVisible;
+  final bool glossVisible;
   final Future<void> Function(String word) onWordSelect;
   final int initialPage;
   final Future<void> Function(int page, int total) onPageChanged;
@@ -410,7 +410,7 @@ class _ReadView extends StatefulWidget {
     required this.words,
     required this.hiddenWords,
     required this.fontSize,
-    required this.furiganaVisible,
+    required this.glossVisible,
     required this.onWordSelect,
     required this.initialPage,
     required this.onPageChanged,
@@ -454,7 +454,7 @@ class _ReadViewState extends State<_ReadView> {
     }
     if (old.words != widget.words ||
         old.hiddenWords != widget.hiddenWords ||
-        old.furiganaVisible != widget.furiganaVisible ||
+        old.glossVisible != widget.glossVisible ||
         old.fontSize != widget.fontSize) {
       _rebuild(keepPage: true);
     }
@@ -541,7 +541,7 @@ class _ReadViewState extends State<_ReadView> {
         ..sort((a, b) => b.length.compareTo(a.length));
       if (allPatterns.isNotEmpty) {
         highlightPattern = RegExp(
-          '(' + allPatterns.map(RegExp.escape).join('|') + ')',
+          '(${allPatterns.map(RegExp.escape).join('|')})',
           caseSensitive: false,
         );
       }
@@ -554,7 +554,7 @@ class _ReadViewState extends State<_ReadView> {
       } else {
         spansByPage.add(await _buildSpans(
           p, widget.fontSize, highlightPattern,
-          widget.words, widget.hiddenWords, lemmaIndex, widget.furiganaVisible,
+          widget.words, widget.hiddenWords, lemmaIndex, widget.glossVisible,
         ));
       }
     }
@@ -574,12 +574,14 @@ class _ReadViewState extends State<_ReadView> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollController.hasClients || _pages.isEmpty) return;
+      if (!_scrollController.position.hasContentDimensions) return;
       _measurePageHeight();
       if (!keepPage) {
+        final maxExtent = _scrollController.position.maxScrollExtent;
         final hgt = _estimatedPageHeight;
         final dest = hgt != null && hgt > 0
-            ? (target * hgt).clamp(0.0, _scrollController.position.maxScrollExtent)
-            : _scrollController.position.maxScrollExtent *
+            ? (target * hgt).clamp(0.0, maxExtent)
+            : maxExtent *
                 (_pages.length <= 1 ? 0.0 : target / (_pages.length - 1));
         _scrollController.jumpTo(dest);
       }
@@ -609,11 +611,11 @@ class _ReadViewState extends State<_ReadView> {
     Map<String, WordEntry> words,
     Map<String, bool> hiddenWords,
     Map<String, String> lemmaIndex,
-    bool showFurigana,
+    bool showGloss,
   ) async {
     final base = TextStyle(color: Colors.white, fontSize: fontSize, height: 1.7);
     final highlighted = base.copyWith(color: const Color(0xFFFF9800));
-    final furiganaSize = fontSize * 0.6;
+    final glossSize = fontSize * 0.6;
     final spans = <InlineSpan>[];
     int cursor = 0;
     int count = 0;
@@ -624,25 +626,25 @@ class _ReadViewState extends State<_ReadView> {
       }
 
       final matched = m.group(0)!;
-      String? furigana;
-      if (showFurigana) {
+      String? gloss;
+      if (showGloss) {
         final nk = normalizeKey(matched);
         final resolvedKey = words.containsKey(nk) ? nk : (lemmaIndex[nk] ?? nk);
         if (!hiddenWords.containsKey(resolvedKey)) {
           final entry = words[resolvedKey];
-          furigana = entry?.resolvedFurigana ?? entry?.definition;
-          if (furigana != null && furigana.isEmpty) furigana = null;
+          gloss = entry?.resolvedGloss ?? entry?.definition;
+          if (gloss != null && gloss.isEmpty) gloss = null;
         }
       }
 
-      if (furigana != null) {
+      if (gloss != null) {
         spans.add(WidgetSpan(
           alignment: PlaceholderAlignment.middle,
           child: _RubySpan(
             word: matched,
-            furigana: furigana,
+            gloss: gloss,
             wordStyle: highlighted,
-            furiganaSize: furiganaSize,
+            glossSize: glossSize,
           ),
         ));
       } else {
@@ -779,22 +781,22 @@ class _ReadViewState extends State<_ReadView> {
   }
 }
 
-// ── Ruby (furigana) 인라인 위젯 ─────────────────────────────────────
+// ── Ruby (gloss) 인라인 위젯 ─────────────────────────────────────
 // WidgetSpan 안에서 단어 크기만큼만 공간을 차지하면서
-// furigana를 단어 바로 위로 Clip.none Stack으로 그린다.
+// gloss를 단어 바로 위로 Clip.none Stack으로 그린다.
 // SizedBox가 단어 텍스트 크기만 점유 → 줄 높이(strut)에 영향 없음.
 
 class _RubySpan extends StatelessWidget {
   final String word;
-  final String furigana;
+  final String gloss;
   final TextStyle wordStyle;
-  final double furiganaSize;
+  final double glossSize;
 
   const _RubySpan({
     required this.word,
-    required this.furigana,
+    required this.gloss,
     required this.wordStyle,
-    required this.furiganaSize,
+    required this.glossSize,
   });
 
   @override
@@ -808,20 +810,20 @@ class _RubySpan extends StatelessWidget {
     wordPainter.dispose();
 
     final rubyStyle = TextStyle(
-      fontSize: furiganaSize,
+      fontSize: glossSize,
       color: const Color(0xFFFF9800),
       height: 1.0,
     );
 
-    // 후리가나 폭 측정 → 단어 위 중앙 정렬
+    // gloss 폭 측정 → 단어 위 중앙 정렬
     final rubyPainter = TextPainter(
-      text: TextSpan(text: furigana, style: rubyStyle),
+      text: TextSpan(text: gloss, style: rubyStyle),
       textDirection: TextDirection.ltr,
     )..layout();
     final rubyLeft = (wordW - rubyPainter.width) / 2;
     rubyPainter.dispose();
 
-    // SizedBox = 단어 점유 크기. Stack(Clip.none) → furigana가 위로 넘침.
+    // SizedBox = 단어 점유 크기. Stack(Clip.none) → gloss가 위로 넘침.
     // bottom: wordH → SizedBox 상단 = 이전 줄과의 행간 공간에 위치
     return SizedBox(
       width: wordW,
@@ -837,7 +839,7 @@ class _RubySpan extends StatelessWidget {
           Positioned(
             left: rubyLeft,
             bottom: wordH,
-            child: Text(furigana, style: rubyStyle, textScaler: TextScaler.noScaling),
+            child: Text(gloss, style: rubyStyle, textScaler: TextScaler.noScaling),
           ),
         ],
       ),

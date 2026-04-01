@@ -232,7 +232,7 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
       isMeaningHidden: _hiddenWords[key] ?? false,
       onSave: () => _saveWord(captured),
       onDelete: () => _deleteWord(key),
-      onFuriganaSelect: (mIdx, kIdx) => _setFurigana(key, mIdx, kIdx, captured),
+      onGlossSelect: (mIdx, kIdx) => _setGloss(key, mIdx, kIdx, captured),
       onToggleMeaningHidden: () => _toggleHiddenWord(key),
     );
   }
@@ -253,11 +253,11 @@ class _OcrOverlayScreenState extends State<OcrOverlayScreen> {
     gist.syncToGist(updated);
   }
 
-  Future<void> _setFurigana(
+  Future<void> _setGloss(
       String key, int mIdx, int kIdx, WordEntry existing) async {
     final updated = {
       ..._words,
-      key: existing.copyWith(furiganaMIdx: mIdx, furiganaKIdx: kIdx),
+      key: existing.copyWith(glossMIdx: mIdx, glossKIdx: kIdx),
     };
     await AppStorage.instance.saveWords(updated);
     if (mounted) setState(() => _words = updated);

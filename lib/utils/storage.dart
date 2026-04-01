@@ -4,13 +4,12 @@ import '../types/word_entry.dart';
 
 const _kWordsKey = 'readbook_words';
 const _kFontSizeKey = 'readbook_font_size';
-const _kFuriganaVisibleKey = 'readbook_furigana_visible';
+const _kGlossVisibleKey = 'readbook_gloss_visible';
 const _kLastTextKey = 'readbook_last_text';
 const _kLastFileNameKey = 'readbook_last_file_name';
 const _kHiddenWordsKey = 'readbook_hidden_words';
 const _kReaderPageKey = 'readbook_reader_page';
 const _kReaderBookmarksKey = 'readbook_reader_bookmarks';
-const _kKnownWordsKey = 'readbook_known_words';
 const _kNativeLangKey = 'readbook_native_lang';
 
 /// SharedPreferences-based word/settings storage
@@ -25,7 +24,7 @@ class AppStorage {
     return _prefs!;
   }
 
-  // ── �E��E��E� ──────────────────────────────────────────────────
+  // ── Words ──────────────────────────────────────────────────
 
   Future<Map<String, WordEntry>> loadWords() async {
     final p = await _p;
@@ -51,7 +50,7 @@ class AppStorage {
     await saveWords(words);
   }
 
-  // ── UI �E��E�E─────────────────────────────────────────────────
+  // ── UI Settings ─────────────────────────────────────────────
 
   Future<double> loadFontSize() async {
     final p = await _p;
@@ -63,14 +62,14 @@ class AppStorage {
     await p.setDouble(_kFontSizeKey, size);
   }
 
-  Future<bool> loadFuriganaVisible() async {
+  Future<bool> loadGlossVisible() async {
     final p = await _p;
-    return p.getBool(_kFuriganaVisibleKey) ?? true;
+    return p.getBool(_kGlossVisibleKey) ?? true;
   }
 
-  Future<void> saveFuriganaVisible(bool v) async {
+  Future<void> saveGlossVisible(bool v) async {
     final p = await _p;
-    await p.setBool(_kFuriganaVisibleKey, v);
+    await p.setBool(_kGlossVisibleKey, v);
   }
 
   Future<String> loadLastText() async {
@@ -155,25 +154,6 @@ class AppStorage {
     final all = await loadReaderBookmarks();
     all[docId] = bookmarks;
     await p.setString(_kReaderBookmarksKey, jsonEncode(all));
-  }
-
-  // ── Known words (study feature) ─────────────────────────────
-
-  Future<Map<String, bool>> loadKnownWords() async {
-    final p = await _p;
-    final raw = p.getString(_kKnownWordsKey);
-    if (raw == null) return {};
-    try {
-      final map = jsonDecode(raw) as Map<String, dynamic>;
-      return map.map((k, v) => MapEntry(k, v as bool));
-    } catch (_) {
-      return {};
-    }
-  }
-
-  Future<void> saveKnownWords(Map<String, bool> known) async {
-    final p = await _p;
-    await p.setString(_kKnownWordsKey, jsonEncode(known));
   }
 
   Future<String> loadNativeLang() async {

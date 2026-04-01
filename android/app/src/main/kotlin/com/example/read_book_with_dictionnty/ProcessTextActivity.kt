@@ -12,15 +12,11 @@ import io.flutter.plugin.common.MethodChannel
 /**
  * Handles android.intent.action.PROCESS_TEXT.
  * Appears as "ReadBook에 저장" in the text-selection context menu of every app.
- *
- * Passes the selected text to Flutter via MethodChannel "com.readbook/process_text",
- * then starts Flutter on the "/process-text" route.
  */
 class ProcessTextActivity : FlutterActivity() {
 
     private var selectedText: String? = null
 
-    // Make the Flutter surface transparent so the calling app shows behind the popup.
     override fun getRenderMode(): RenderMode = RenderMode.texture
     override fun getTransparencyMode(): TransparencyMode = TransparencyMode.transparent
 
