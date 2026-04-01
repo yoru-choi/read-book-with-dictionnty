@@ -82,7 +82,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       appBar: AppBar(
         backgroundColor: const Color(0xFF181825),
         title: const Text('Settings', style: TextStyle(color: Colors.white)),
-        actions: const [],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
